@@ -1068,23 +1068,38 @@ def procesar_sag(rutas):
         picking_pos = pd.read_excel(path_picking, sheet_name="Posicion")
         picking_cab = pd.read_excel(path_picking, sheet_name="Cabecera")
 
+        # Normalizar columnas claves
         if "Codigo_Barra" in SAG.columns:
             SAG["Codigo_Barra"] = SAG["Codigo_Barra"].astype(str).str.strip()
         else:
-            return False, "Los archivos SIF no tienen la columna 'Codigo_Barra'.", []
+            return False, "Los archivos SIF no tienen la columna 'Codigo_Barra'."
             
         picking_pos["Lote"] = picking_pos["Lote"].astype(str).str.strip()
         
         if "SIF" in SAG.columns:
+            # 1. Crear una columna numérica temporal para ordenar correctamente
+            SAG['SIF_num'] = pd.to_numeric(SAG['SIF'], errors='coerce')
+            
+            # 2. Ordenar por Codigo_Barra y SIF_num (descendente para que el mayor quede arriba)
+            SAG = SAG.sort_values(by=['Codigo_Barra', 'SIF_num'], ascending=[True, False])
+            
+            # 3. Eliminar duplicados de lote, conservando el primero (que ahora es el SIF mayor)
+            SAG = SAG.drop_duplicates(subset=['Codigo_Barra'], keep='first')
+            
+            # 4. Normalizar SIF a texto (tu lógica original)
             SAG['SIF'] = (
                 SAG['SIF']
                 .astype(str)
                 .str.strip()
                 .str.replace(r'\.0$', '', regex=True)
             )
+            
+            # Opcional: Eliminar la columna temporal si ya no la necesitas
+            SAG = SAG.drop(columns=['SIF_num'])
         else:
-            return False, "Los archivos SIF no tienen la columna 'SIF'.", []
+            return False, "Los archivos SIF no tienen la columna 'SIF'."
 
+        # Merge Picking Posicion con SIF
         picking_pos = picking_pos.merge(
             SAG[["Codigo_Barra", "SIF"]],
             how="left",
@@ -2161,4 +2176,5 @@ def ejecutar_proceso():
         st.error(f"Error: {mensaje}")
 
 if __name__ == "__main__":
+
     main()
