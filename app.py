@@ -146,7 +146,36 @@ def agregar_cabecera_arauco(ws, datos):
             celda.alignment = alineacion_izq
 
     ws['B4'].alignment = alineacion_centro
+# ==========================================
+#   PREPROCESAMIENTO ROBUSTO (TIPO CORREO)
+# ==========================================
+def limpiar_dataframe(df):
+    """
+    Aplica limpieza profunda al DataFrame para evitar errores en cruces (merges).
+    1. Elimina columnas duplicadas.
+    2. Elimina caracteres nulos (\x00) y espacios en todo el DataFrame.
+    """
+    if df.empty:
+        return df
+        
+    # 1. Eliminar columnas duplicadas que causan colisiones
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    
+    # 2. Limpieza profunda de strings a nivel global
+    # Usamos try-except para soportar tanto versiones nuevas (map) como antiguas (applymap) de Pandas
+    try:
+        df = df.map(lambda x: str(x).replace('\x00', '').strip() if isinstance(x, str) else x)
+    except AttributeError:
+        df = df.applymap(lambda x: str(x).replace('\x00', '').strip() if isinstance(x, str) else x)
+        
+    return df
 
+def leer_y_limpiar_excel(ruta, **kwargs):
+    """
+    Wrapper para leer Excel y limpiarlo inmediatamente.
+    """
+    df = pd.read_excel(ruta, **kwargs)
+    return limpiar_dataframe(df)
 # ==========================================
 #      LÓGICA DE MADERA (CORREGIDA)
 # ==========================================
@@ -170,7 +199,7 @@ def procesar_madera(rutas):
 
     try:
         # 1. Cargar PROGRAMA
-        programa = pd.read_excel(rutas['programa'])
+        programa = leer_y_limpiar_excel(rutas['programa'])
         programa = separar_entregas_multiples(programa, "Entrega")
         
         if 'historico' in rutas and rutas['historico']:
@@ -186,7 +215,7 @@ def procesar_madera(rutas):
         # 2. Cargar SALDOS
         if 'saldos' in rutas and rutas['saldos']:
             try:
-                saldos = pd.read_excel(rutas['saldos'])
+                saldos = leer_y_limpiar_excel(rutas['saldos'])
                 saldos = separar_entregas_multiples(saldos, "Entrega")
                 st.success("Archivo Saldos cargado y normalizado.")
             except Exception as e:
@@ -196,13 +225,13 @@ def procesar_madera(rutas):
             saldos = pd.DataFrame(columns=["Entrega", "Box Saldo"])
 
         # 3. Cargar DESPACHO
-        despacho = pd.read_excel(rutas['despacho'])
+        despacho = leer_y_limpiar_excel(rutas['despacho'])
         
         # 4. Cargar DETALLE
-        detalle = pd.read_excel(rutas['detalle'])
+        detalle = leer_y_limpiar_excel(rutas['detalle'])
         
         # 5. Cargar INFORME
-        consolidado = pd.read_excel(rutas['informe'])
+        consolidado = leer_y_limpiar_excel(rutas['informe'])
         
         # 6. Cargar ZOOPP
         ruta_zoopp = rutas['zoopp']
@@ -212,6 +241,7 @@ def procesar_madera(rutas):
                 table = DBF(ruta_zoopp, encoding='latin-1', char_decode_errors='ignore')
                 zoopp = pd.DataFrame(iter(table))
                 zoopp.columns = [c.lower() for c in zoopp.columns]
+                zoopp = limpiar_dataframe(zoopp)
                 mapeo_dbf = {
                     "loteof": "loteof,C,10", "vollote": "vollote,C,15",
                     "posped": "posped,N,6,0", "desmat": "desmat,C,40"
@@ -221,7 +251,7 @@ def procesar_madera(rutas):
                 st.error(f"Error leyendo DBF: {e}")
                 raise e
         else:
-            zoopp = pd.read_excel(rutas['zoopp'])
+            zoopp = leer_y_limpiar_excel(rutas['zoopp'])
 
         # --- RENOMBRAR COLUMNAS DESPACHO ---
         mapa_columnas_despacho = {
