@@ -1846,13 +1846,13 @@ def procesar_cmpc_plywood(rutas):
 # ==========================================
 CONFIG_ARCHIVOS = {
     "Madera": [
-        {"id": "programa", "nombre": "Programa", "opcional": False},
-        {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
-        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
-        {"id": "despacho", "nombre": "Despacho", "opcional": False},
-        {"id": "detalle",  "nombre": "Detalle",  "opcional": False},
-        {"id": "informe",  "nombre": "Informe",  "opcional": False},
-        {"id": "zoopp",    "nombre": "Zoopp",    "opcional": False},
+        {"id": "programa", "nombre": "Programa", "opcional": False,"descripcion": "Último programa de consolidación enviado por Arauco"},
+        {"id": "saldos",   "nombre": "Saldos",   "opcional": True,"descripcion": "Prog Consolidación -> Saldos Autorizados por Programa"},
+        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True,"descripcion": "Remates enviados anteriormente},
+        {"id": "despacho", "nombre": "Despacho", "opcional": False,"descripcion": "Consultas -> Planillas de Recepciones/Despachos (Despachos a Contenedor) "},
+        {"id": "detalle",  "nombre": "Detalle",  "opcional": False,"descripcion": "Prog Consolidación -> Consulta Detalle Programa de Consolidación"},
+        {"id": "informe",  "nombre": "Informe",  "opcional": False,"descripcion": "Informe -> Informe Consolidado "},
+        {"id": "zoopp",    "nombre": "Zoopp",    "opcional": False,"descripcion": "Archivo sacado de SAP, consulta ZOOPP"},
     ],
     "Celulosa BKP EKP UKP": [
         {"id": "programa", "nombre": "Programa", "opcional": False},
@@ -2082,23 +2082,26 @@ def mostrar_panel_proceso():
     
     st.subheader("Carga de Archivos")
     
-    # Crear formulario para subir archivos
+# Crear formulario para subir archivos
     with st.form("upload_form"):
         for item in lista_archivos:
             es_multiple = item.get("multiple", False)
             required = "" if item["opcional"] else "🔴"
+            
+            # Obtener la descripción (si existe en la configuración)
+            descripcion_tooltip = item.get("descripcion", None)
             
             if es_multiple:
                 uploaded_files = st.file_uploader(
                     f"{required} {item['nombre']} {'(Múltiple)' if es_multiple else ''}",
                     type=['xlsx', 'xls', 'dbf'],
                     accept_multiple_files=True,
-                    key=get_file_uploader_key(item["id"], st.session_state.session_id)
+                    key=get_file_uploader_key(item["id"], st.session_state.session_id),
+                    help=descripcion_tooltip  # <-- AQUÍ AGREGAMOS EL TOOLTIP
                 )
                 if uploaded_files:
                     temp_files = []
                     for uploaded_file in uploaded_files:
-                        # Guardar archivo temporal
                         with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{uploaded_file.name}") as tmp_file:
                             tmp_file.write(uploaded_file.getvalue())
                             temp_files.append(tmp_file.name)
@@ -2108,10 +2111,10 @@ def mostrar_panel_proceso():
                 uploaded_file = st.file_uploader(
                     f"{required} {item['nombre']}",
                     type=['xlsx', 'xls', 'dbf'],
-                    key=get_file_uploader_key(item["id"], st.session_state.session_id)
+                    key=get_file_uploader_key(item["id"], st.session_state.session_id),
+                    help=descripcion_tooltip  # <-- AQUÍ AGREGAMOS EL TOOLTIP
                 )
                 if uploaded_file:
-                    # Guardar archivo temporal
                     with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{uploaded_file.name}") as tmp_file:
                         tmp_file.write(uploaded_file.getvalue())
                         st.session_state.archivos_cargados[item["id"]] = tmp_file.name
