@@ -2065,7 +2065,7 @@ def mostrar_menu_materiales_cmpc():
             st.rerun()
 
 def mostrar_panel_proceso():
-    st.header(f"Panelt: {st.session_state.tipo_material}")
+    st.header(f"Panel: {st.session_state.tipo_material}")
     
     if st.button("← Volver"):
         st.session_state.tipo_material = None
