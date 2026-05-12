@@ -1848,7 +1848,7 @@ CONFIG_ARCHIVOS = {
     "Madera": [
         {"id": "programa", "nombre": "Programa", "opcional": False,"descripcion": "Último programa de consolidación enviado por Arauco"},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True,"descripcion": "Prog Consolidación -> Saldos Autorizados por Programa"},
-        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True,"descripcion": "Remates enviados anteriormente},
+        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True,"descripcion": "Remates enviados anteriormente"},
         {"id": "despacho", "nombre": "Despacho", "opcional": False,"descripcion": "Consultas -> Planillas de Recepciones/Despachos (Despachos a Contenedor) "},
         {"id": "detalle",  "nombre": "Detalle",  "opcional": False,"descripcion": "Prog Consolidación -> Consulta Detalle Programa de Consolidación"},
         {"id": "informe",  "nombre": "Informe",  "opcional": False,"descripcion": "Informe -> Informe Consolidado "},
