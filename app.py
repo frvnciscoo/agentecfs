@@ -1929,41 +1929,32 @@ def procesar_cuadratura_celulosa(rutas):
 
         df_fisico = pd.DataFrame(datos_fisico)
 
-        # ==========================================
+         # ==========================================
         # 2. PROCESAR DATOS DEL SISTEMA (Múltiples Archivos)
         # ==========================================
         lista_df_sistemas = []
         
-        # --- MODO DIAGNÓSTICO EN PANTALLA ---
-        st.write("### 🕵️‍♂️ Analizando Archivos del Sistema...")
-        
         for ruta_sys in rutas_sistema:
-            # Extraemos el nombre original ignorando los prefijos de Streamlit
-            nombre_arch = os.path.basename(ruta_sys).split('_')[-1]
-            st.write(f"**Procesando:** {nombre_arch}")
             df_temp = pd.DataFrame()
             
-            # Intento 1: Excel Estándar
+            # Apertura robusta multi-formato
             try:
                 df_temp = pd.read_excel(ruta_sys)
-            except Exception as e1:
-                # Intento 2: Formato de sistema (HTML disfrazado de XLS)
+            except Exception:
                 try:
                     df_temp = pd.read_html(ruta_sys, decimal=',', thousands='.')[0]
-                except Exception as e2:
-                    # Intento 3: Formato de sistema (Texto tabulado disfrazado de XLS)
+                except Exception:
                     try:
                         df_temp = pd.read_csv(ruta_sys, sep='\t', encoding='latin-1')
-                    except Exception as e3:
-                        st.error(f"❌ Fallo total al abrir {nombre_arch}. No es un Excel, HTML ni TSV válido.")
+                    except Exception:
+                        try:
+                            df_temp = pd.read_csv(ruta_sys, sep='\t', encoding='utf-16-le')
+                        except Exception as e:
+                            st.warning(f"No se pudo abrir uno de los archivos: {e}")
             
             if not df_temp.empty:
-                # Estandarizamos los nombres de las columnas a MAYÚSCULAS y sin espacios a los lados
                 df_temp.columns = df_temp.columns.astype(str).str.strip().str.upper()
-                st.info(f"📌 Columnas extraídas de {nombre_arch}: `{list(df_temp.columns)}`")
                 lista_df_sistemas.append(df_temp)
-            else:
-                st.warning(f"⚠️ El archivo {nombre_arch} fue leído, pero parece estar vacío.")
 
         # --- Consolidación de Datos del Sistema ---
         try:
@@ -1971,16 +1962,20 @@ def procesar_cuadratura_celulosa(rutas):
                 df_sistema_raw = pd.concat(lista_df_sistemas, ignore_index=True)
                 df_sistema = pd.DataFrame()
                 
-                # Búsqueda de columnas tolerante a errores de tipeo
+                # Búsqueda de columna Expedición
                 col_exp = next((c for c in df_sistema_raw.columns if 'EXPEDICI' in c or 'LOTE' in c), None)
                 if not col_exp:
-                    st.error("🚨 Error Crítico: No se encontró la columna 'Expedición' o 'Lote' en el archivo del sistema. Revisa la lista azul de arriba.")
-                    raise ValueError("Falta columna clave")
+                    raise ValueError("No se encontró la columna 'Expedición' en los archivos base.")
 
+                # ==========================================
+                # FIX: Operaciones vectorizadas seguras (Adiós error de float)
+                # ==========================================
                 df_sistema['Lote'] = df_sistema_raw[col_exp].astype(str).str.strip()
-                df_sistema['Lote'] = df_sistema['Lote'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
-                df_sistema['Lote'] = df_sistema['Lote'].str.replace(r'\D', '', regex=True)
-                df_sistema = df_sistema[df_sistema['Lote'] != '']
+                df_sistema['Lote'] = df_sistema['Lote'].str.replace(r'\.0$', '', regex=True) # Quita ".0" final si existe
+                df_sistema['Lote'] = df_sistema['Lote'].str.replace(r'\D', '', regex=True)   # Mantiene solo números
+                
+                # Filtrar vacíos y celdas NaN que hayan quedado como texto
+                df_sistema = df_sistema[(df_sistema['Lote'] != '') & (df_sistema['Lote'].str.lower() != 'nan')]
                 
                 # Buscar Bodega
                 col_bod = next((c for c in df_sistema_raw.columns if 'BODEGA' in c), None)
@@ -1993,15 +1988,12 @@ def procesar_cuadratura_celulosa(rutas):
                 # Buscar Cantidad/Stock
                 col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c or 'CANT' in c), None)
                 if col_stock:
-                    # Limpiar formato de números europeos/latinos antes de convertir
                     valores_stock = df_sistema_raw[col_stock].astype(str).str.replace(',', '.', regex=False)
                     df_sistema['Fardos'] = pd.to_numeric(valores_stock, errors='coerce').fillna(0)
                 else:
                     df_sistema['Fardos'] = 0
-                    st.warning("⚠️ No se detectó columna de Stock/Cantidad. Los fardos se calcularon como 0.")
                     
                 df_sistema['Unit'] = df_sistema['Fardos'] / 8
-                st.success(f"✅ Se consolidaron {len(df_sistema)} registros del sistema.")
                 
             else:
                 df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
