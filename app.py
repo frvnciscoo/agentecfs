@@ -2169,10 +2169,10 @@ def main():
         if st.session_state.tipo_material is None:
             if st.session_state.empresa_seleccionada == "Arauco":
                 mostrar_menu_materiales_arauco()
-            elif:
+            elif st.session_state.empresa_seleccionada == "CMPC":
                 mostrar_menu_materiales_cmpc()
             elif st.session_state.empresa_seleccionada == "General":
-                mostrar_menu_materiales_general()     
+                mostrar_menu_materiales_general()
         else:
             mostrar_panel_proceso()
 
