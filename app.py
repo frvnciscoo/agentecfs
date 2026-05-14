@@ -2108,7 +2108,7 @@ CONFIG_ARCHIVOS = {
     ],  
     "Cuadrar Celulosa": [
         {"id": "bodegas", "nombre": "Planos de Bodega", "opcional": False, "multiple": True, "descripcion": "Archivos Excel con el plano físico de las bodegas."},
-        {"id": "sistema", "nombre": "Stock Sistema", "opcional": False, "multiple": True, "descripcion": "Archivos Excel del sistema (ej: arauco.xls, cmpc.xls)."}
+        {"id": "sistema", "nombre": "Stock Sistema", "opcional": False, "multiple": True, "descripcion": "Consultas -> Consulta Stock sin Código de Barra"}
     ]    
 }
 
