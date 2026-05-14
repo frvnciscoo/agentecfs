@@ -12,6 +12,7 @@ import datetime
 import tempfile
 from io import BytesIO
 import base64
+import re
 
 # --- FUNCIÓN AUXILIAR RUTAS ---
 def resolver_ruta(ruta_relativa):
@@ -1840,7 +1841,185 @@ def procesar_cmpc_plywood(rutas):
         import traceback
         traceback.print_exc()
         return False, str(e), []
+# ==========================================
+#      LÓGICA GENERAL: CUADRATURA CELULOSA
+# ==========================================
+def procesar_cuadratura_celulosa(rutas):
+    st.info("Iniciando Cuadratura de Celulosa...")
+    try:
+        rutas_bodegas = rutas['bodegas']
+        rutas_sistema = rutas['sistema']
+        
+        # Asegurar que sean listas
+        if isinstance(rutas_bodegas, str): rutas_bodegas = [rutas_bodegas]
+        if isinstance(rutas_sistema, str): rutas_sistema = [rutas_sistema]
+        
+        # ==========================================
+        # 1. PROCESAR DATOS FÍSICOS (PLANOS DE BODEGA)
+        # ==========================================
+        datos_fisico = []
+        for ruta in rutas_bodegas:
+            # Obtener el nombre original del archivo (Streamlit le añade un prefijo aleatorio)
+            nombre_original = os.path.basename(ruta).split('_')[-1]
+            bodega_nombre = nombre_original.split('.')[0].upper()
+            
+            try:
+                dict_hojas = pd.read_excel(ruta, header=None, sheet_name=None)
+                for nombre_hoja, df in dict_hojas.items():
+                    rows, cols = df.shape
+                    puntos_inicio = []
+                    
+                    for r in range(rows):
+                        for c in range(cols - 4):
+                            try:
+                                h1 = str(df.iloc[r, c]).strip().upper()
+                                h2 = str(df.iloc[r, c+1]).strip().upper()
+                                if 'DESCRIPCI' in h1 and 'LOTE' in h2:
+                                    puntos_inicio.append((r, c))
+                            except: continue
+                    
+                    for r_start, c_start in puntos_inicio:
+                        r_actual = r_start + 1
+                        consecutivos_vacios = 0
+                        
+                        while r_actual < rows:
+                            fila_data = df.iloc[r_actual, c_start:c_start+5]
+                            vals_fila = [str(x) for x in fila_data.values if pd.notna(x)]
+                            
+                            if len("".join(vals_fila).strip()) < 2:
+                                consecutivos_vacios += 1
+                                if consecutivos_vacios >= 10: break
+                                r_actual += 1
+                                continue
+                            
+                            consecutivos_vacios = 0
+                            desc = str(fila_data.iloc[0]).strip()
+                            lote = str(fila_data.iloc[1]).strip()
+                            
+                            if lote.endswith('.0'): lote = lote[:-2]
+                            lote = re.sub(r'\D', '', lote)
+                            
+                            units_raw = fila_data.iloc[3]
+                            plano_estado = str(fila_data.iloc[4]).strip().upper()
+                            
+                            if desc == 'nan' or 'DESCRIPCI' in desc.upper():
+                                r_actual += 1
+                                continue
+                                
+                            estado_final = "DAÑADA" if plano_estado == 'DAÑADA' else "NORMAL"
+                            
+                            try:
+                                val_str = str(units_raw).replace(',', '.')
+                                units = float(val_str)
+                                fardos = units * 8
+                            except:
+                                units, fardos = 0, 0
+                                
+                            if pd.notna(fila_data.iloc[1]) and lote != 'nan' and lote != '':
+                                datos_fisico.append({
+                                    'Bodega': bodega_nombre,
+                                    'Lote': lote,
+                                    'Cliente/Desc': desc,
+                                    'Unit': units,
+                                    'Fardos': fardos,
+                                    'Estado': estado_final
+                                })
+                            r_actual += 1
+            except Exception as e:
+                st.warning(f"Error procesando plano {nombre_original}: {e}")
 
+        df_fisico = pd.DataFrame(datos_fisico)
+
+        # ==========================================
+        # 2. PROCESAR DATOS DEL SISTEMA (Múltiples Archivos)
+        # ==========================================
+        lista_df_sistemas = []
+        for ruta_sys in rutas_sistema:
+            try:
+                df_temp = pd.read_excel(ruta_sys)
+                lista_df_sistemas.append(df_temp)
+            except Exception as e:
+                st.warning(f"Error procesando archivo de sistema: {e}")
+
+        try:
+            if lista_df_sistemas:
+                df_sistema_raw = pd.concat(lista_df_sistemas, ignore_index=True)
+                df_sistema_raw.columns = df_sistema_raw.columns.str.strip()
+                
+                df_sistema = pd.DataFrame()
+                df_sistema['Lote'] = df_sistema_raw['Expedición'].astype(str).str.strip()
+                df_sistema['Lote'] = df_sistema['Lote'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
+                df_sistema['Lote'] = df_sistema['Lote'].str.replace(r'\D', '', regex=True)
+                df_sistema = df_sistema[df_sistema['Lote'] != '']
+                
+                df_sistema['Bodega'] = df_sistema_raw['Bodega'].astype(str)
+                df_sistema['F. Máx. Recepción'] = df_sistema_raw.get('F. Máx. Recepción', 'N/A')
+                df_sistema['Fardos'] = pd.to_numeric(df_sistema_raw['Cant. Stock'], errors='coerce').fillna(0)
+                df_sistema['Unit'] = df_sistema['Fardos'] / 8
+            else:
+                df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
+        except Exception as e:
+            st.error(f"Error consolidando datos del sistema: {e}")
+            df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
+
+        # ==========================================
+        # 3. GENERAR CRUCE (Agrupación y Cuadratura)
+        # ==========================================
+        if not df_fisico.empty:
+            df_fisico_agrupado = df_fisico.groupby('Lote', as_index=False).agg({
+                'Cliente/Desc': 'first', 'Unit': 'sum'            
+            }).rename(columns={'Unit': 'Unit Físico'})
+        else:
+            df_fisico_agrupado = pd.DataFrame(columns=['Lote', 'Cliente/Desc', 'Unit Físico'])
+
+        if not df_sistema.empty:
+            df_sistema_agrupado = df_sistema.groupby('Lote', as_index=False).agg({
+                'F. Máx. Recepción': 'first', 'Unit': 'sum'
+            }).rename(columns={'Unit': 'Unit Sistema'})
+        else:
+            df_sistema_agrupado = pd.DataFrame(columns=['Lote', 'F. Máx. Recepción', 'Unit Sistema'])
+
+        df_cruce = pd.merge(df_fisico_agrupado, df_sistema_agrupado, on='Lote', how='outer')
+        
+        df_cruce['Unit Físico'] = df_cruce['Unit Físico'].fillna(0)
+        df_cruce['Unit Sistema'] = df_cruce['Unit Sistema'].fillna(0)
+        df_cruce['Cliente/Desc'] = df_cruce['Cliente/Desc'].fillna('Solo en Sistema')
+        df_cruce['F. Máx. Recepción'] = df_cruce['F. Máx. Recepción'].fillna('Solo en Físico')
+        
+        df_cruce['Diferencia'] = df_cruce['Unit Físico'] - df_cruce['Unit Sistema']
+        df_cruce['Cuadrado'] = df_cruce['Diferencia'].apply(lambda x: 'Si' if abs(x) < 0.01 else 'No')
+        
+        columnas_ordenadas = ['Lote', 'Cliente/Desc', 'F. Máx. Recepción', 'Unit Físico', 'Unit Sistema', 'Diferencia', 'Cuadrado']
+        df_cruce = df_cruce[columnas_ordenadas].sort_values(by='Cuadrado', ascending=False)
+
+        # ==========================================
+        # 4. EXPORTAR A EXCEL EN MEMORIA
+        # ==========================================
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            if not df_fisico.empty:
+                df_fisico.to_excel(writer, sheet_name='Físico', index=False)
+            else:
+                pd.DataFrame(['Sin datos']).to_excel(writer, sheet_name='Físico', index=False)
+                
+            if not df_sistema.empty:
+                df_sistema.to_excel(writer, sheet_name='Sistema', index=False)
+            else:
+                pd.DataFrame(['Sin datos']).to_excel(writer, sheet_name='Sistema', index=False)
+                
+            if not df_cruce.empty:
+                df_cruce.to_excel(writer, sheet_name='Cruce', index=False)
+            else:
+                pd.DataFrame(['Sin datos']).to_excel(writer, sheet_name='Cruce', index=False)
+                
+        output.seek(0)
+        return True, "Cuadratura generada exitosamente", [("Cuadratura_Celulosa.xlsx", output)]
+
+    except Exception as e:
+        st.error(f"Error en procesamiento: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e), []
 # ==========================================
 #      INTERFAZ STREAMLIT
 # ==========================================
@@ -1886,7 +2065,11 @@ CONFIG_ARCHIVOS = {
     "CMPC Plywood": [
         {"id": "remate", "nombre": "Remate", "opcional": False},
         {"id": "tools",  "nombre": "Tools",  "opcional": False},
-    ]        
+    ],  
+    "Cuadrar Celulosa": [
+        {"id": "bodegas", "nombre": "Planos de Bodega", "opcional": False, "multiple": True, "descripcion": "Archivos Excel con el plano físico de las bodegas."},
+        {"id": "sistema", "nombre": "Stock Sistema", "opcional": False, "multiple": True, "descripcion": "Archivos Excel del sistema (ej: arauco.xls, cmpc.xls)."}
+    ]    
 }
 
 def get_file_uploader_key(file_id, session_id):
@@ -1986,15 +2169,17 @@ def main():
         if st.session_state.tipo_material is None:
             if st.session_state.empresa_seleccionada == "Arauco":
                 mostrar_menu_materiales_arauco()
-            else:
+            elif:
                 mostrar_menu_materiales_cmpc()
+            elif st.session_state.empresa_seleccionada == "General":
+                mostrar_menu_materiales_general()     
         else:
             mostrar_panel_proceso()
 
 def mostrar_inicio_empresas():
-    st.header("Seleccione Empresa")
+    st.header("Seleccione Empresa / Categoría")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3) # Cambiamos a 3 columnas
     
     with col1:
         if st.button("**ARAUCO**", use_container_width=True, type="primary"):
@@ -2008,6 +2193,26 @@ def mostrar_inicio_empresas():
             st.session_state.tipo_material = None
             st.rerun()
 
+    with col3:
+        if st.button("**GENERAL**", use_container_width=True, type="primary"):
+            st.session_state.empresa_seleccionada = "General"
+            st.session_state.tipo_material = None
+            st.rerun()
+
+# AGREGAR ESTA NUEVA FUNCIÓN
+def mostrar_menu_materiales_general():
+    st.header("General - Seleccione Proceso")
+    
+    if st.button("← Volver a Empresas"):
+        st.session_state.empresa_seleccionada = None
+        st.session_state.tipo_material = None
+        st.rerun()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("**Cuadrar Celulosa**", use_container_width=True):
+            st.session_state.tipo_material = "Cuadrar Celulosa"
+            st.rerun()
 def mostrar_menu_materiales_arauco():
     st.header("Arauco - Seleccione Material")
     
@@ -2186,6 +2391,8 @@ def ejecutar_proceso():
             exito, mensaje, archivos = procesar_cmpc_papel(rutas)
         elif tipo_material == "CMPC Plywood":
             exito, mensaje, archivos = procesar_cmpc_plywood(rutas)
+        elif tipo_material == "Cuadrar Celulosa": # <--- AGREGAR ESTAS DOS LÍNEAS
+            exito, mensaje, archivos = procesar_cuadratura_celulosa(rutas)    
         else:
             exito, mensaje, archivos = False, "Lógica no implementada", []
         
