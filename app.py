@@ -1859,7 +1859,6 @@ def procesar_cuadratura_celulosa(rutas):
         # ==========================================
         datos_fisico = []
         for ruta in rutas_bodegas:
-            # Obtener el nombre original del archivo (Streamlit le añade un prefijo aleatorio)
             nombre_original = os.path.basename(ruta).split('_')[-1]
             bodega_nombre = nombre_original.split('.')[0].upper()
             
@@ -1936,28 +1935,54 @@ def procesar_cuadratura_celulosa(rutas):
         lista_df_sistemas = []
         for ruta_sys in rutas_sistema:
             try:
-                df_temp = pd.read_excel(ruta_sys)
-                lista_df_sistemas.append(df_temp)
+                # 1. Intentamos leer limpiando caracteres nulos ocultos
+                try:
+                    df_temp = leer_y_limpiar_excel(ruta_sys)
+                except Exception:
+                    # 2. Fallback: Si el archivo .xls del sistema es en realidad un HTML disfrazado
+                    df_temp = pd.read_html(ruta_sys, decimal=',', thousands='.')[0]
+                    df_temp = limpiar_dataframe(df_temp)
+                
+                if not df_temp.empty:
+                    lista_df_sistemas.append(df_temp)
             except Exception as e:
-                st.warning(f"Error procesando archivo de sistema: {e}")
+                st.warning(f"Error procesando archivo de sistema {os.path.basename(ruta_sys)}: {e}")
 
         try:
             if lista_df_sistemas:
                 df_sistema_raw = pd.concat(lista_df_sistemas, ignore_index=True)
-                df_sistema_raw.columns = df_sistema_raw.columns.str.strip()
+                
+                # Pasamos todas las columnas a mayúsculas y sin espacios a los bordes para evitar fallos
+                df_sistema_raw.columns = df_sistema_raw.columns.str.strip().str.upper()
                 
                 df_sistema = pd.DataFrame()
-                df_sistema['Lote'] = df_sistema_raw['Expedición'].astype(str).str.strip()
+                
+                # Búsqueda robusta de columnas clave (por si vienen sin tilde o con espacios extras)
+                col_exp = next((c for c in df_sistema_raw.columns if 'EXPEDICI' in c), None)
+                if not col_exp:
+                    raise ValueError("No se encontró la columna 'Expedición' en los reportes del sistema.")
+
+                df_sistema['Lote'] = df_sistema_raw[col_exp].astype(str).str.strip()
                 df_sistema['Lote'] = df_sistema['Lote'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 df_sistema['Lote'] = df_sistema['Lote'].str.replace(r'\D', '', regex=True)
                 df_sistema = df_sistema[df_sistema['Lote'] != '']
                 
-                df_sistema['Bodega'] = df_sistema_raw['Bodega'].astype(str)
-                df_sistema['F. Máx. Recepción'] = df_sistema_raw.get('F. Máx. Recepción', 'N/A')
-                df_sistema['Fardos'] = pd.to_numeric(df_sistema_raw['Cant. Stock'], errors='coerce').fillna(0)
+                col_bod = next((c for c in df_sistema_raw.columns if 'BODEGA' in c), 'BODEGA')
+                df_sistema['Bodega'] = df_sistema_raw.get(col_bod, 'N/A').astype(str)
+                
+                col_fmax = next((c for c in df_sistema_raw.columns if 'MÁX' in c or 'MAX' in c), 'F. Máx. Recepción')
+                df_sistema['F. Máx. Recepción'] = df_sistema_raw.get(col_fmax, 'N/A')
+                
+                col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c), 'CANT. STOCK')
+                if col_stock in df_sistema_raw.columns:
+                    df_sistema['Fardos'] = pd.to_numeric(df_sistema_raw[col_stock], errors='coerce').fillna(0)
+                else:
+                    df_sistema['Fardos'] = 0
+                    
                 df_sistema['Unit'] = df_sistema['Fardos'] / 8
             else:
                 df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
+                
         except Exception as e:
             st.error(f"Error consolidando datos del sistema: {e}")
             df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
