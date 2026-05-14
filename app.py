@@ -1933,58 +1933,81 @@ def procesar_cuadratura_celulosa(rutas):
         # 2. PROCESAR DATOS DEL SISTEMA (Múltiples Archivos)
         # ==========================================
         lista_df_sistemas = []
+        
+        # --- MODO DIAGNÓSTICO EN PANTALLA ---
+        st.write("### 🕵️‍♂️ Analizando Archivos del Sistema...")
+        
         for ruta_sys in rutas_sistema:
+            # Extraemos el nombre original ignorando los prefijos de Streamlit
+            nombre_arch = os.path.basename(ruta_sys).split('_')[-1]
+            st.write(f"**Procesando:** {nombre_arch}")
+            df_temp = pd.DataFrame()
+            
+            # Intento 1: Excel Estándar
             try:
-                # 1. Intentamos leer limpiando caracteres nulos ocultos
+                df_temp = pd.read_excel(ruta_sys)
+            except Exception as e1:
+                # Intento 2: Formato de sistema (HTML disfrazado de XLS)
                 try:
-                    df_temp = leer_y_limpiar_excel(ruta_sys)
-                except Exception:
-                    # 2. Fallback: Si el archivo .xls del sistema es en realidad un HTML disfrazado
                     df_temp = pd.read_html(ruta_sys, decimal=',', thousands='.')[0]
-                    df_temp = limpiar_dataframe(df_temp)
-                
-                if not df_temp.empty:
-                    lista_df_sistemas.append(df_temp)
-            except Exception as e:
-                st.warning(f"Error procesando archivo de sistema {os.path.basename(ruta_sys)}: {e}")
+                except Exception as e2:
+                    # Intento 3: Formato de sistema (Texto tabulado disfrazado de XLS)
+                    try:
+                        df_temp = pd.read_csv(ruta_sys, sep='\t', encoding='latin-1')
+                    except Exception as e3:
+                        st.error(f"❌ Fallo total al abrir {nombre_arch}. No es un Excel, HTML ni TSV válido.")
+            
+            if not df_temp.empty:
+                # Estandarizamos los nombres de las columnas a MAYÚSCULAS y sin espacios a los lados
+                df_temp.columns = df_temp.columns.astype(str).str.strip().str.upper()
+                st.info(f"📌 Columnas extraídas de {nombre_arch}: `{list(df_temp.columns)}`")
+                lista_df_sistemas.append(df_temp)
+            else:
+                st.warning(f"⚠️ El archivo {nombre_arch} fue leído, pero parece estar vacío.")
 
+        # --- Consolidación de Datos del Sistema ---
         try:
             if lista_df_sistemas:
                 df_sistema_raw = pd.concat(lista_df_sistemas, ignore_index=True)
-                
-                # Pasamos todas las columnas a mayúsculas y sin espacios a los bordes para evitar fallos
-                df_sistema_raw.columns = df_sistema_raw.columns.str.strip().str.upper()
-                
                 df_sistema = pd.DataFrame()
                 
-                # Búsqueda robusta de columnas clave (por si vienen sin tilde o con espacios extras)
-                col_exp = next((c for c in df_sistema_raw.columns if 'EXPEDICI' in c), None)
+                # Búsqueda de columnas tolerante a errores de tipeo
+                col_exp = next((c for c in df_sistema_raw.columns if 'EXPEDICI' in c or 'LOTE' in c), None)
                 if not col_exp:
-                    raise ValueError("No se encontró la columna 'Expedición' en los reportes del sistema.")
+                    st.error("🚨 Error Crítico: No se encontró la columna 'Expedición' o 'Lote' en el archivo del sistema. Revisa la lista azul de arriba.")
+                    raise ValueError("Falta columna clave")
 
                 df_sistema['Lote'] = df_sistema_raw[col_exp].astype(str).str.strip()
                 df_sistema['Lote'] = df_sistema['Lote'].apply(lambda x: x[:-2] if x.endswith('.0') else x)
                 df_sistema['Lote'] = df_sistema['Lote'].str.replace(r'\D', '', regex=True)
                 df_sistema = df_sistema[df_sistema['Lote'] != '']
                 
-                col_bod = next((c for c in df_sistema_raw.columns if 'BODEGA' in c), 'BODEGA')
-                df_sistema['Bodega'] = df_sistema_raw.get(col_bod, 'N/A').astype(str)
+                # Buscar Bodega
+                col_bod = next((c for c in df_sistema_raw.columns if 'BODEGA' in c), None)
+                df_sistema['Bodega'] = df_sistema_raw[col_bod].astype(str) if col_bod else 'N/A'
                 
-                col_fmax = next((c for c in df_sistema_raw.columns if 'MÁX' in c or 'MAX' in c), 'F. Máx. Recepción')
-                df_sistema['F. Máx. Recepción'] = df_sistema_raw.get(col_fmax, 'N/A')
+                # Buscar Fecha Máxima
+                col_fmax = next((c for c in df_sistema_raw.columns if 'MÁX' in c or 'MAX' in c or 'RECEPCI' in c), None)
+                df_sistema['F. Máx. Recepción'] = df_sistema_raw[col_fmax] if col_fmax else 'N/A'
                 
-                col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c), 'CANT. STOCK')
-                if col_stock in df_sistema_raw.columns:
-                    df_sistema['Fardos'] = pd.to_numeric(df_sistema_raw[col_stock], errors='coerce').fillna(0)
+                # Buscar Cantidad/Stock
+                col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c or 'CANT' in c), None)
+                if col_stock:
+                    # Limpiar formato de números europeos/latinos antes de convertir
+                    valores_stock = df_sistema_raw[col_stock].astype(str).str.replace(',', '.', regex=False)
+                    df_sistema['Fardos'] = pd.to_numeric(valores_stock, errors='coerce').fillna(0)
                 else:
                     df_sistema['Fardos'] = 0
+                    st.warning("⚠️ No se detectó columna de Stock/Cantidad. Los fardos se calcularon como 0.")
                     
                 df_sistema['Unit'] = df_sistema['Fardos'] / 8
+                st.success(f"✅ Se consolidaron {len(df_sistema)} registros del sistema.")
+                
             else:
                 df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
                 
         except Exception as e:
-            st.error(f"Error consolidando datos del sistema: {e}")
+            st.error(f"Error al armar la tabla del sistema: {e}")
             df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
 
         # ==========================================
