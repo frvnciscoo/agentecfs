@@ -1108,24 +1108,10 @@ def procesar_sag(rutas):
         picking_pos["Lote"] = picking_pos["Lote"].astype(str).str.strip()
         
         if "SIF" in SAG.columns:
-            # 1. Crear una columna numérica temporal para ordenar correctamente
             SAG['SIF_num'] = pd.to_numeric(SAG['SIF'], errors='coerce')
-            
-            # 2. Ordenar por Codigo_Barra y SIF_num (descendente para que el mayor quede arriba)
             SAG = SAG.sort_values(by=['Codigo_Barra', 'SIF_num'], ascending=[True, False])
-            
-            # 3. Eliminar duplicados de lote, conservando el primero (que ahora es el SIF mayor)
             SAG = SAG.drop_duplicates(subset=['Codigo_Barra'], keep='first')
-            
-            # 4. Normalizar SIF a texto (tu lógica original)
-            SAG['SIF'] = (
-                SAG['SIF']
-                .astype(str)
-                .str.strip()
-                .str.replace(r'\.0$', '', regex=True)
-            )
-            
-            # Opcional: Eliminar la columna temporal si ya no la necesitas
+            SAG['SIF'] = SAG['SIF'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
             SAG = SAG.drop(columns=['SIF_num'])
         else:
             return False, "Los archivos SIF no tienen la columna 'SIF'."
@@ -1178,17 +1164,35 @@ def procesar_sag(rutas):
         picking_cab["ID Contenedor"] = picking_cab["ID Contenedor"].astype(str).str.strip()
         remate["Contenedor"] = remate["Contenedor"].astype(str).str.strip()
 
-        remate = remate.merge(
-            picking_cab[[
-                "ID Contenedor",
-                "SIF",
-                "Cantidad de Lotes",
-                "Peso Total"
-            ]],
-            left_on="Contenedor",
-            right_on="ID Contenedor",
-            how="left"
-        )
+        # Asegurar que 'Entrega' sea string en ambos para el merge sin duplicados
+        if "Entrega" in remate.columns and "Entrega" in picking_cab.columns:
+            remate["Entrega"] = remate["Entrega"].astype(str).str.strip()
+            picking_cab["Entrega"] = picking_cab["Entrega"].astype(str).str.strip()
+            
+            remate = remate.merge(
+                picking_cab[[
+                    "ID Contenedor",
+                    "Entrega",
+                    "SIF",
+                    "Cantidad de Lotes",
+                    "Peso Total"
+                ]],
+                left_on=["Contenedor", "Entrega"],
+                right_on=["ID Contenedor", "Entrega"],
+                how="left"
+            )
+        else:
+            remate = remate.merge(
+                picking_cab[[
+                    "ID Contenedor",
+                    "SIF",
+                    "Cantidad de Lotes",
+                    "Peso Total"
+                ]],
+                left_on="Contenedor",
+                right_on="ID Contenedor",
+                how="left"
+            )
 
         remate = remate.drop(columns=["ID Contenedor"], errors="ignore")
         
@@ -1200,39 +1204,49 @@ def procesar_sag(rutas):
 
         remate = remate.rename(columns={"Peso Total": "Peso Lote"})
 
+        # =========================================================
+        # NUEVA LÓGICA: AGRUPAR POR CONTENEDOR (1 ÚNICO REGISTRO)
+        # =========================================================
+        # Definimos cómo sumar/unir las columnas cuando hay más de 1 entrega
+        agg_dict = {
+            "Entrega": lambda x: " / ".join(x.dropna().astype(str).unique()),
+            "Reserva": "first",
+            "Pto Destino": "first",
+            "Clase de Producto": "first",
+            "Sello": "first",
+            "Sello Inspector": "first",
+            "Peso Total (kg)": "sum",
+            "Volumen Total (m3)": "sum",
+            "SIF": lambda x: " / ".join(x.dropna().astype(str).unique()),
+            "Cantidad de Lotes": "sum",
+            "Peso Lote": "sum"
+        }
+        
+        # Filtramos para incluir solo las columnas que realmente existan
+        valid_agg = {k: v for k, v in agg_dict.items() if k in remate.columns}
+        
+        # Aplicamos la agrupación para asegurar un solo registro por contenedor
+        remate = remate.groupby("Contenedor", as_index=False).agg(valid_agg)
+        
+        # Ordenamos las columnas de forma limpia
+        cols_order = [
+            "Entrega", "Reserva", "Pto Destino", "Clase de Producto", 
+            "Contenedor", "Sello", "Sello Inspector", "SIF", 
+            "Cantidad de Lotes", "Peso Lote", "Peso Total (kg)", "Volumen Total (m3)"
+        ]
+        cols_final = [c for c in cols_order if c in remate.columns]
+        for c in remate.columns:
+            if c not in cols_final:
+                cols_final.append(c)
+                
+        remate = remate[cols_final]
+
+        # Creación del Excel
         output = BytesIO()
         remate.to_excel(output, index=False, engine='openpyxl')
         
         wb = load_workbook(output)
-        ws = wb.active
-
-        columnas_merge = [5, 6, 7, 8, 9]
-
-        fila_inicio = 6
-        while fila_inicio <= ws.max_row:
-            fila_fin = fila_inicio
-
-            while (
-                fila_fin + 1 <= ws.max_row and
-                all(
-                    ws.cell(row=fila_inicio, column=col).value ==
-                    ws.cell(row=fila_fin + 1, column=col).value
-                    for col in columnas_merge
-                )
-            ):
-                fila_fin += 1
-
-            if fila_fin > fila_inicio:
-                for col in columnas_merge:
-                    ws.merge_cells(
-                        start_row=fila_inicio,
-                        start_column=col,
-                        end_row=fila_fin,
-                        end_column=col
-                    )
-
-            fila_inicio = fila_fin + 1
-
+        
         final_output = BytesIO()
         wb.save(final_output)
         final_output.seek(0)
