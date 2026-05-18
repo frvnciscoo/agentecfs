@@ -1068,17 +1068,18 @@ def procesar_celulosa_sb(rutas):
 def procesar_sag(rutas):
     st.info("Iniciando procesamiento de SAG...")
     try:
+        # 1. Cargar Remate
         path_remate = rutas['remate']
         remate = pd.read_excel(path_remate)
+        remate["Contenedor"] = remate["Contenedor"].astype(str).str.strip()
         
+        # 2. Cargar Archivos SIF (SAG)
         rutas_sif = rutas['sag']
-        
         if isinstance(rutas_sif, str):
             rutas_sif = [rutas_sif]
             
         lista_sifs = []
         st.info(f"Cargando {len(rutas_sif)} archivos SIF...")
-        
         for ruta in rutas_sif:
             try:
                 df_temp = pd.read_excel(ruta, sheet_name="detalle")
@@ -1091,124 +1092,75 @@ def procesar_sag(rutas):
             
         SAG = pd.concat(lista_sifs, ignore_index=True)
         
+        # 3. Cargar Picking
         path_picking = rutas['picking']
-        
         if not os.path.exists(path_picking):
              return False, f"No se encontró el archivo Picking: {path_picking}", []
 
         picking_pos = pd.read_excel(path_picking, sheet_name="Posicion")
         picking_cab = pd.read_excel(path_picking, sheet_name="Cabecera")
 
-        # Normalizar columnas claves
-        if "Codigo_Barra" in SAG.columns:
-            SAG["Codigo_Barra"] = SAG["Codigo_Barra"].astype(str).str.strip()
-        else:
-            return False, "Los archivos SIF no tienen la columna 'Codigo_Barra'."
+        # 4. Normalizar columnas SAG (SIF)
+        if "Codigo_Barra" not in SAG.columns or "SIF" not in SAG.columns:
+            return False, "Los archivos SIF no tienen las columnas 'Codigo_Barra' o 'SIF'.", []
             
-        picking_pos["Lote"] = picking_pos["Lote"].astype(str).str.strip()
+        SAG["Codigo_Barra"] = SAG["Codigo_Barra"].astype(str).str.strip()
+        SAG['SIF_num'] = pd.to_numeric(SAG['SIF'], errors='coerce')
+        # Ordenar para quedarnos con el SIF mayor en caso de duplicados
+        SAG = SAG.sort_values(by=['Codigo_Barra', 'SIF_num'], ascending=[True, False])
+        SAG = SAG.drop_duplicates(subset=['Codigo_Barra'], keep='first')
+        SAG['SIF'] = SAG['SIF'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
         
-        if "SIF" in SAG.columns:
-            SAG['SIF_num'] = pd.to_numeric(SAG['SIF'], errors='coerce')
-            SAG = SAG.sort_values(by=['Codigo_Barra', 'SIF_num'], ascending=[True, False])
-            SAG = SAG.drop_duplicates(subset=['Codigo_Barra'], keep='first')
-            SAG['SIF'] = SAG['SIF'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-            SAG = SAG.drop(columns=['SIF_num'])
-        else:
-            return False, "Los archivos SIF no tienen la columna 'SIF'."
-
-        # Merge Picking Posicion con SIF
+        # 5. Preparar Picking Posición
+        picking_pos["Lote"] = picking_pos["Lote"].astype(str).str.strip()
+        picking_cab["ID Contenedor"] = picking_cab["ID Contenedor"].astype(str).str.strip()
+        
+        # Traer el ID Contenedor a la tabla de posiciones (paquetes)
+        picking_pos = picking_pos.merge(
+            picking_cab[["ID Cabecera", "ID Contenedor"]],
+            on="ID Cabecera",
+            how="left"
+        )
+        
+        # Cruzar los paquetes con su respectivo SIF
         picking_pos = picking_pos.merge(
             SAG[["Codigo_Barra", "SIF"]],
             how="left",
             left_on="Lote",
             right_on="Codigo_Barra"
         )
-        
-        if "Codigo_Barra" in picking_pos.columns:
-            picking_pos = picking_pos.drop(columns=["Codigo_Barra"])
-
-        picking_pos["SIF"] = picking_pos["SIF"].astype(str).str.strip()
-        picking_pos["Lote"] = picking_pos["Lote"].astype(str).str.strip()
-
-        sif_por_cabecera = (
-            picking_pos[["ID Cabecera", "SIF"]]
-            .dropna()
-            .drop_duplicates()
-        )
-
-        metricas = (
-            picking_pos.groupby(["ID Cabecera", "SIF"])
-            .agg({
-                "Lote": "count",        # Cantidad de Lotes
-                "Peso": "sum"           # Peso Total
-            })
-            .reset_index()
-            .rename(columns={
-                "Lote": "Cantidad de Lotes",
-                "Peso": "Peso Total"
-            })
-        )
-
-        picking_cab = picking_cab.merge(
-            sif_por_cabecera,
-            on="ID Cabecera",
-            how="left"
-        )
-
-        picking_cab = picking_cab.merge(
-            metricas,
-            on=["ID Cabecera", "SIF"],
-            how="left"
-        )
-
-        picking_cab["ID Contenedor"] = picking_cab["ID Contenedor"].astype(str).str.strip()
-        remate["Contenedor"] = remate["Contenedor"].astype(str).str.strip()
-
-        # Asegurar que 'Entrega' sea string en ambos para el merge sin duplicados
-        if "Entrega" in remate.columns and "Entrega" in picking_cab.columns:
-            remate["Entrega"] = remate["Entrega"].astype(str).str.strip()
-            picking_cab["Entrega"] = picking_cab["Entrega"].astype(str).str.strip()
-            
-            remate = remate.merge(
-                picking_cab[[
-                    "ID Contenedor",
-                    "Entrega",
-                    "SIF",
-                    "Cantidad de Lotes",
-                    "Peso Total"
-                ]],
-                left_on=["Contenedor", "Entrega"],
-                right_on=["ID Contenedor", "Entrega"],
-                how="left"
-            )
-        else:
-            remate = remate.merge(
-                picking_cab[[
-                    "ID Contenedor",
-                    "SIF",
-                    "Cantidad de Lotes",
-                    "Peso Total"
-                ]],
-                left_on="Contenedor",
-                right_on="ID Contenedor",
-                how="left"
-            )
-
-        remate = remate.drop(columns=["ID Contenedor"], errors="ignore")
-        
-        if "Cantidad de Lotes_x" in remate.columns:
-            remate = remate.drop(columns=["Cantidad de Lotes_x"])
-
-        if "Cantidad de Lotes_y" in remate.columns:
-            remate = remate.rename(columns={"Cantidad de Lotes_y": "Cantidad de Lotes"})
-
-        remate = remate.rename(columns={"Peso Total": "Peso Lote"})
+        picking_pos["SIF"] = picking_pos["SIF"].fillna("Sin SIF").astype(str).str.strip()
 
         # =========================================================
-        # NUEVA LÓGICA: AGRUPAR POR CONTENEDOR (1 ÚNICO REGISTRO)
+        # PROCESO A: Agrupar Picking separando cantidades por SIF
         # =========================================================
-        # Definimos cómo sumar/unir las columnas cuando hay más de 1 entrega
-        agg_dict = {
+        # Primero contamos lotes y sumamos peso por Contenedor + SIF
+        resumen_sif = picking_pos.groupby(["ID Contenedor", "SIF"], dropna=False).agg({
+            "Lote": "count",
+            "Peso": "sum"
+        }).reset_index()
+        
+        # Formateamos para que sean textos limpios
+        resumen_sif["SIF"] = resumen_sif["SIF"].astype(str)
+        resumen_sif["Lote"] = resumen_sif["Lote"].fillna(0).astype(int).astype(str)
+        resumen_sif["Peso"] = resumen_sif["Peso"].fillna(0).round(2).astype(str)
+        
+        # Luego concatenamos en una sola fila por Contenedor (Ej: "10 / 5")
+        sif_agrupado = resumen_sif.groupby("ID Contenedor").agg({
+            "SIF": lambda x: " / ".join(x),
+            "Lote": lambda x: " / ".join(x),
+            "Peso": lambda x: " / ".join(x)
+        }).reset_index()
+        
+        sif_agrupado = sif_agrupado.rename(columns={
+            "Lote": "Cantidad de Lotes",
+            "Peso": "Peso Lote"
+        })
+
+        # =========================================================
+        # PROCESO B: Agrupar Remate (1 fila por contenedor)
+        # =========================================================
+        agg_remate = {
             "Entrega": lambda x: " / ".join(x.dropna().astype(str).unique()),
             "Reserva": "first",
             "Pto Destino": "first",
@@ -1216,37 +1168,43 @@ def procesar_sag(rutas):
             "Sello": "first",
             "Sello Inspector": "first",
             "Peso Total (kg)": "sum",
-            "Volumen Total (m3)": "sum",
-            "SIF": lambda x: " / ".join(x.dropna().astype(str).unique()),
-            "Cantidad de Lotes": "sum",
-            "Peso Lote": "sum"
+            "Volumen Total (m3)": "sum"
         }
         
-        # Filtramos para incluir solo las columnas que realmente existan
-        valid_agg = {k: v for k, v in agg_dict.items() if k in remate.columns}
+        valid_agg = {k: v for k, v in agg_remate.items() if k in remate.columns}
+        remate_agrupado = remate.groupby("Contenedor", as_index=False).agg(valid_agg)
+
+        # =========================================================
+        # PROCESO C: Unir Remate agrupado con SIF agrupado
+        # =========================================================
+        remate_final = remate_agrupado.merge(
+            sif_agrupado,
+            left_on="Contenedor",
+            right_on="ID Contenedor",
+            how="left"
+        )
         
-        # Aplicamos la agrupación para asegurar un solo registro por contenedor
-        remate = remate.groupby("Contenedor", as_index=False).agg(valid_agg)
-        
-        # Ordenamos las columnas de forma limpia
+        remate_final = remate_final.drop(columns=["ID Contenedor"], errors="ignore")
+
+        # Ordenar las columnas para el reporte final
         cols_order = [
             "Entrega", "Reserva", "Pto Destino", "Clase de Producto", 
             "Contenedor", "Sello", "Sello Inspector", "SIF", 
             "Cantidad de Lotes", "Peso Lote", "Peso Total (kg)", "Volumen Total (m3)"
         ]
-        cols_final = [c for c in cols_order if c in remate.columns]
-        for c in remate.columns:
+        
+        cols_final = [c for c in cols_order if c in remate_final.columns]
+        for c in remate_final.columns:
             if c not in cols_final:
                 cols_final.append(c)
                 
-        remate = remate[cols_final]
+        remate_final = remate_final[cols_final]
 
-        # Creación del Excel
+        # Creación del Excel en memoria
         output = BytesIO()
-        remate.to_excel(output, index=False, engine='openpyxl')
+        remate_final.to_excel(output, index=False, engine='openpyxl')
         
         wb = load_workbook(output)
-        
         final_output = BytesIO()
         wb.save(final_output)
         final_output.seek(0)
@@ -1258,7 +1216,6 @@ def procesar_sag(rutas):
         import traceback
         traceback.print_exc()
         return False, str(e), []
-
 # ==========================================
 #      LÓGICA CMPC CELULOSA
 # ==========================================
