@@ -1957,7 +1957,7 @@ def procesar_cuadratura_celulosa(rutas):
                 df_sistema['F. Máx. Recepción'] = df_sistema_raw[col_fmax] if col_fmax else 'N/A'
                 
                 # Buscar Cantidad/Stock
-                col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c or 'CANT' in c), None)
+                col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c), None)
                 if col_stock:
                     valores_stock = df_sistema_raw[col_stock].astype(str).str.replace(',', '.', regex=False)
                     df_sistema['Fardos'] = pd.to_numeric(valores_stock, errors='coerce').fillna(0)
