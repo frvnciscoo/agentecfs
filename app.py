@@ -1977,7 +1977,10 @@ def procesar_cuadratura_celulosa(rutas):
         # 3. GENERAR CRUCE (Agrupación y Cuadratura)
         # ==========================================
         if not df_fisico.empty:
-            df_fisico_agrupado = df_fisico.groupby('Lote', as_index=False).agg({
+            # Excluir el stock en estado 'DAÑADA' solo para el cálculo del cruce
+            df_fisico_valido = df_fisico[df_fisico['Estado'] != 'DAÑADA']
+            
+            df_fisico_agrupado = df_fisico_valido.groupby('Lote', as_index=False).agg({
                 'Cliente/Desc': 'first', 'Unit': 'sum'            
             }).rename(columns={'Unit': 'Unit Físico'})
         else:
