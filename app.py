@@ -1956,8 +1956,11 @@ def procesar_cuadratura_celulosa(rutas):
                 col_fmax = next((c for c in df_sistema_raw.columns if 'MÁX' in c or 'MAX' in c or 'RECEPCI' in c), None)
                 df_sistema['F. Máx. Recepción'] = df_sistema_raw[col_fmax] if col_fmax else 'N/A'
                 
-                # Buscar Cantidad/Stock
-                col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c), None)
+                # Buscar Cantidad/Stock principal (Sano)
+                col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c and 'BLOQ' not in c and 'DAÑA' not in c), None)
+                if not col_stock: # Fallback por si la columna se llama solo "STOCK"
+                    col_stock = next((c for c in df_sistema_raw.columns if 'STOCK' in c), None)
+
                 if col_stock:
                     valores_stock = df_sistema_raw[col_stock].astype(str).str.replace(',', '.', regex=False)
                     df_sistema['Fardos'] = pd.to_numeric(valores_stock, errors='coerce').fillna(0)
@@ -1965,45 +1968,79 @@ def procesar_cuadratura_celulosa(rutas):
                     df_sistema['Fardos'] = 0
                     
                 df_sistema['Unit'] = df_sistema['Fardos'] / 8
+
+                # LÓGICA PARA STOCK DAÑADO EN SISTEMA
+                # 1. Puede venir en una columna de cantidad aparte (ej: "Stock Bloqueado" o "Stock Dañado")
+                col_stock_bloq = next((c for c in df_sistema_raw.columns if 'BLOQ' in c or 'DAÑA' in c or 'RECHAZ' in c), None)
+                if col_stock_bloq:
+                    valores_bloq = df_sistema_raw[col_stock_bloq].astype(str).str.replace(',', '.', regex=False)
+                    df_sistema['Unit Dañado'] = pd.to_numeric(valores_bloq, errors='coerce').fillna(0) / 8
+                else:
+                    # 2. O puede venir especificado en una columna de "Estado"
+                    col_estado = next((c for c in df_sistema_raw.columns if 'ESTADO' in c or 'CONDICI' in c), None)
+                    if col_estado:
+                        estado_sys = df_sistema_raw[col_estado].astype(str).str.upper()
+                        mask_danado = estado_sys.str.contains('DAÑA|BLOQ|RECH|MAL', na=False)
+                        
+                        df_sistema['Unit Dañado'] = np.where(mask_danado, df_sistema['Unit'], 0)
+                        # Dejamos solo lo sano en Unit normal
+                        df_sistema['Unit'] = np.where(~mask_danado, df_sistema['Unit'], 0) 
+                    else:
+                        df_sistema['Unit Dañado'] = 0
                 
             else:
-                df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
+                df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit', 'Unit Dañado'])
                 
         except Exception as e:
             st.error(f"Error al armar la tabla del sistema: {e}")
-            df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit'])
+            df_sistema = pd.DataFrame(columns=['Lote', 'Bodega', 'F. Máx. Recepción', 'Fardos', 'Unit', 'Unit Dañado'])
 
         # ==========================================
         # 3. GENERAR CRUCE (Agrupación y Cuadratura)
         # ==========================================
         if not df_fisico.empty:
-            # Excluir el stock en estado 'DAÑADA' solo para el cálculo del cruce
-            df_fisico_valido = df_fisico[df_fisico['Estado'] != 'DAÑADA']
+            # Separar Sano y Dañado en el físico mediante columnas
+            df_fisico['Unit Sano'] = np.where(df_fisico['Estado'] != 'DAÑADA', df_fisico['Unit'], 0)
+            df_fisico['Unit Dañado'] = np.where(df_fisico['Estado'] == 'DAÑADA', df_fisico['Unit'], 0)
             
-            df_fisico_agrupado = df_fisico_valido.groupby('Lote', as_index=False).agg({
-                'Cliente/Desc': 'first', 'Unit': 'sum'            
-            }).rename(columns={'Unit': 'Unit Físico'})
+            df_fisico_agrupado = df_fisico.groupby('Lote', as_index=False).agg({
+                'Cliente/Desc': 'first', 
+                'Unit Sano': 'sum',
+                'Unit Dañado': 'sum'
+            }).rename(columns={'Unit Sano': 'Unit Físico', 'Unit Dañado': 'Stock Físico Dañado'})
         else:
-            df_fisico_agrupado = pd.DataFrame(columns=['Lote', 'Cliente/Desc', 'Unit Físico'])
+            df_fisico_agrupado = pd.DataFrame(columns=['Lote', 'Cliente/Desc', 'Unit Físico', 'Stock Físico Dañado'])
 
         if not df_sistema.empty:
+            # Sumar Sano y Dañado en el sistema
             df_sistema_agrupado = df_sistema.groupby('Lote', as_index=False).agg({
-                'F. Máx. Recepción': 'first', 'Unit': 'sum'
-            }).rename(columns={'Unit': 'Unit Sistema'})
+                'F. Máx. Recepción': 'first', 
+                'Unit': 'sum',
+                'Unit Dañado': 'sum'
+            }).rename(columns={'Unit': 'Unit Sistema', 'Unit Dañado': 'Stock Dañado Sistema'})
         else:
-            df_sistema_agrupado = pd.DataFrame(columns=['Lote', 'F. Máx. Recepción', 'Unit Sistema'])
+            df_sistema_agrupado = pd.DataFrame(columns=['Lote', 'F. Máx. Recepción', 'Unit Sistema', 'Stock Dañado Sistema'])
 
         df_cruce = pd.merge(df_fisico_agrupado, df_sistema_agrupado, on='Lote', how='outer')
         
-        df_cruce['Unit Físico'] = df_cruce['Unit Físico'].fillna(0)
-        df_cruce['Unit Sistema'] = df_cruce['Unit Sistema'].fillna(0)
+        # Rellenar nulos con 0 para realizar operaciones matemáticas sin error
+        cols_numericas = ['Unit Físico', 'Stock Físico Dañado', 'Unit Sistema', 'Stock Dañado Sistema']
+        for col in cols_numericas:
+            df_cruce[col] = df_cruce[col].fillna(0)
+            
         df_cruce['Cliente/Desc'] = df_cruce['Cliente/Desc'].fillna('Solo en Sistema')
         df_cruce['F. Máx. Recepción'] = df_cruce['F. Máx. Recepción'].fillna('Solo en Físico')
         
+        # La cuadratura/diferencia principal sigue comparando solo el stock SANO
         df_cruce['Diferencia'] = df_cruce['Unit Físico'] - df_cruce['Unit Sistema']
         df_cruce['Cuadrado'] = df_cruce['Diferencia'].apply(lambda x: 'Si' if abs(x) < 0.01 else 'No')
         
-        columnas_ordenadas = ['Lote', 'Cliente/Desc', 'F. Máx. Recepción', 'Unit Físico', 'Unit Sistema', 'Diferencia', 'Cuadrado']
+        # Agregamos las nuevas columnas de daño al final del reporte
+        columnas_ordenadas = [
+            'Lote', 'Cliente/Desc', 'F. Máx. Recepción', 
+            'Unit Físico', 'Unit Sistema', 'Diferencia', 'Cuadrado',
+            'Stock Físico Dañado', 'Stock Dañado Sistema'
+        ]
         df_cruce = df_cruce[columnas_ordenadas].sort_values(by='Cuadrado', ascending=False)
 
         # ==========================================
