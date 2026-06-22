@@ -900,13 +900,13 @@ def procesar_celulosa_cb(rutas):
         return False, str(e), []
 
 # ==========================================
-#      LÓGICA DE CELULOSA DP
+#      LÓGICA DE CELULOSA DP (Actualizada a Tools)
 # ==========================================
 def procesar_celulosa_sb(rutas):
     st.info("Iniciando procesamiento de Celulosa DP...")
     try:
         programa = pd.read_excel(rutas['programa'])
-        informe = pd.read_excel(rutas['informe'])
+        tools = pd.read_excel(rutas['tools']) # Ahora lee 'tools' en vez de 'informe'
 
         if 'saldos' in rutas and rutas['saldos']:
             try:
@@ -952,58 +952,75 @@ def procesar_celulosa_sb(rutas):
 
         entregas_validas = prog_filtrado["Entrega"].unique()
         
-        if "contrato" in informe.columns:
-            informe["contrato"] = informe["contrato"].astype(str).str.strip()
-            informe = informe[informe["contrato"].isin(entregas_validas)]
+        # --- LÓGICA HOMOLOGADA AL ARCHIVO TOOLS ---
+        if "Orden_Pedido" in tools.columns:
+            tools["Orden_Pedido"] = tools["Orden_Pedido"].astype(str).str.strip()
+            tools = tools[tools["Orden_Pedido"].isin(entregas_validas)]
         else:
-            return False, "El archivo Informe no tiene la columna 'contrato'.", []
+            return False, "El archivo Tools no tiene la columna 'Orden_Pedido'.", []
 
-        informe['nro_cnt'] = informe['nro_cnt'].astype(str).str.strip()
-        informe['sigla_cnt'] = informe['sigla_cnt'].astype(str).str.strip()
-        informe['dv_cnt'] = informe['dv_cnt'].astype(str).str.strip()
+        # Construir el Contenedor (BOX)
+        tools['Cnt_Sigla'] = tools['Cnt_Sigla'].astype(str).str.strip()
+        tools['Cnt_Nro'] = tools['Cnt_Nro'].astype(str).str.strip()
+        tools['Cnt_DV'] = tools['Cnt_DV'].astype(str).str.strip()
 
-        def construir_contenedor_2(row):
-            sigla = row['sigla_cnt']
-            numero = row['nro_cnt'].zfill(6)
-            dv = row['dv_cnt']
+        def normalizar_box_tools(row):
+            sigla = str(row['Cnt_Sigla']).strip()
+            val_num = str(row['Cnt_Nro'])
+            if '.' in val_num:
+                numero = val_num.split('.')[0].strip()
+            else:
+                numero = val_num.strip()
+            dv = str(row['Cnt_DV']).strip()
+            numero = numero.zfill(6)
             return f"{sigla}-{numero}-{dv}"
 
-        informe['CONTENEDOR_2'] = informe.apply(construir_contenedor_2, axis=1)
+        tools['BOX'] = tools.apply(normalizar_box_tools, axis=1)
 
-        df = informe.rename(columns={
-            "CONTENEDOR_2": "BOX",
-            "tara_cnt": "TARA",
-            "marca": "LOTE",
-            "sello": "SELLO",
-            "orden_embarque": "RESERVA",
-            "reserva": "DUS",
-            "maxgross": "MAX"
-        })
+        # Mapeo de columnas con la nueva estructura
+        df = tools.copy()
+        df["contrato"] = df["Orden_Pedido"]
+        df["TARA"] = df["Tara"]
+        df["LOTE"] = df["Marca"]
+        df["SELLO"] = df["Sello_linea"]
+        df["RESERVA"] = df["Reserva"]
+        df["DUS"] = df["Orden_Embarque"]
+        
+        # Validación de Max_Gross y Cantidad (como en EKP/BKP)
+        df["MAX"] = df.get("Max_Gross", 999999) 
+        if "Cantidad" in df.columns:
+            df["BULTOS"] = pd.to_numeric(df["Cantidad"], errors='coerce').fillna(0)
+        else:
+            df["BULTOS"] = 1 # Fallback por si la columna no existe
 
+        df["UNI"] = df["BULTOS"] / 8
+
+        # Limpieza de sellos nulos o vacíos
         df = df[df["SELLO"].notna() & (df["SELLO"].astype(str).str.strip() != "")]
 
-        agrupado = df.groupby(["BOX", "LOTE"]).agg({
-            "TARA": "first",
-            "SELLO": "first",
-            "RESERVA": "first",
-            "DUS": "first",
-            "contrato": "first",
-            "MAX":"first",
-            "BOX": "count"
-        }).rename(columns={"BOX": "UNI"})
+        # Agrupación con la misma técnica de BKP EKP UKP
+        df_agrupado = (
+            df.groupby(["contrato", "BOX", "LOTE"], as_index=False)
+              .agg({
+                  "TARA": "first",
+                  "BULTOS": "sum",
+                  "SELLO": "first",
+                  "RESERVA": "first",
+                  "DUS": "first",
+                  "MAX": "first"
+              })
+        )
+        
+        # Recálculo de UNI post-agrupación
+        df_agrupado["UNI"] = df_agrupado["BULTOS"] / 8
+        columnas_finales = ["BOX", "TARA", "BULTOS", "UNI", "LOTE", "SELLO", "RESERVA", "DUS", "MAX"]
 
-        agrupado["BULTOS"] = agrupado["UNI"] * 8
-
-        agrupado = agrupado.reset_index()[[
-            "BOX", "TARA", "BULTOS", "UNI", "LOTE",
-            "SELLO", "RESERVA", "DUS", "MAX", "contrato"
-        ]]
-
+        # Generación del Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for contrato, data in agrupado.groupby("contrato"):
+            for contrato, data in df_agrupado.groupby("contrato"):
                 hoja = str(contrato)
-                data_limpia = data.drop(columns=["contrato"], inplace=False)
+                data_limpia = data[columnas_finales]
                 
                 data_limpia.to_excel(writer, sheet_name=hoja, index=False, startrow=5)
 
@@ -1025,6 +1042,7 @@ def procesar_celulosa_sb(rutas):
         
         wb = load_workbook(output)
 
+        # Merge de celdas BOX para visualización
         for sheetname in wb.sheetnames:
             ws = wb[sheetname]
             
@@ -2093,7 +2111,7 @@ CONFIG_ARCHIVOS = {
     "Celulosa DP": [
         {"id": "programa", "nombre": "Programa", "opcional": False},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
-        {"id": "informe",  "nombre": "Informe",  "opcional": False},
+        {"id": "tools",    "nombre": "Tools",    "opcional": False}, # <--- AQUÍ SE CAMBIA
         {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
     ],
     "SAG": [
