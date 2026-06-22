@@ -1986,7 +1986,7 @@ CONFIG_ARCHIVOS = {
     "Celulosa": [
         {"id": "programa", "nombre": "Programa", "opcional": False, "descripcion": "Programa que contiene entregas BKP/EKP/UKP y/o DP"},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
-        {"id": "tools",    "nombre": "Tools",    "opcional": False, "multiple": True, "descripcion": "Puede subir uno o varios archivos Tools"},
+        {"id": "tools",    "nombre": "Tools",    "opcional": False, "multiple": True, "descripcion": "Subir tools con/sin CB (Contrato,Contenedor,Expedicion,Tara,Cantidad,Sello_linea,Reserva,Orden_Embarque,Orden_Pedido,Cnt_Sigla,Cnt_DV,Cnt_Nro,Marca"},
         {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
     ],
     "SAG": [
