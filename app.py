@@ -825,6 +825,7 @@ def procesar_celulosa(rutas):
                     tools_cb["Expedicion"] = tools_cb["Expedicion"].astype(str).str.strip()
                     
                     def normalizar_box(contenedor):
+                        contenedor = str(contenedor).replace('.0', '')
                         partes = contenedor.split('-')
                         if len(partes) == 3:
                             parte_media_normalizada = partes[1].zfill(6)
@@ -869,7 +870,8 @@ def procesar_celulosa(rutas):
                     def normalizar_box_tools(row):
                         sigla = str(row['Cnt_Sigla']).strip()
                         val_num = str(row['Cnt_Nro']).split('.')[0].strip() if '.' in str(row['Cnt_Nro']) else str(row['Cnt_Nro']).strip()
-                        dv = str(row['Cnt_DV']).strip()
+                        # Extraemos solo el número antes del punto decimal para el DV
+                        dv = str(row['Cnt_DV']).split('.')[0].strip() if '.' in str(row['Cnt_DV']) else str(row['Cnt_DV']).strip()
                         return f"{sigla}-{val_num.zfill(6)}-{dv}"
 
                     tools_dp['BOX'] = tools_dp.apply(normalizar_box_tools, axis=1)
