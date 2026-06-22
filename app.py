@@ -900,13 +900,13 @@ def procesar_celulosa_cb(rutas):
         return False, str(e), []
 
 # ==========================================
-#      LÓGICA DE CELULOSA DP (Actualizada a Tools)
+#      LÓGICA DE CELULOSA DP (Actualizada a Tools con ajuste UNI/BULTOS)
 # ==========================================
 def procesar_celulosa_sb(rutas):
     st.info("Iniciando procesamiento de Celulosa DP...")
     try:
         programa = pd.read_excel(rutas['programa'])
-        tools = pd.read_excel(rutas['tools']) # Ahora lee 'tools' en vez de 'informe'
+        tools = pd.read_excel(rutas['tools'])
 
         if 'saldos' in rutas and rutas['saldos']:
             try:
@@ -985,34 +985,27 @@ def procesar_celulosa_sb(rutas):
         df["SELLO"] = df["Sello_linea"]
         df["RESERVA"] = df["Reserva"]
         df["DUS"] = df["Orden_Embarque"]
-        
-        # Validación de Max_Gross y Cantidad (como en EKP/BKP)
         df["MAX"] = df.get("Max_Gross", 999999) 
-        if "Cantidad" in df.columns:
-            df["BULTOS"] = pd.to_numeric(df["Cantidad"], errors='coerce').fillna(0)
-        else:
-            df["BULTOS"] = 1 # Fallback por si la columna no existe
-
-        df["UNI"] = df["BULTOS"] / 8
 
         # Limpieza de sellos nulos o vacíos
         df = df[df["SELLO"].notna() & (df["SELLO"].astype(str).str.strip() != "")]
 
-        # Agrupación con la misma técnica de BKP EKP UKP
-        df_agrupado = (
-            df.groupby(["contrato", "BOX", "LOTE"], as_index=False)
-              .agg({
-                  "TARA": "first",
-                  "BULTOS": "sum",
-                  "SELLO": "first",
-                  "RESERVA": "first",
-                  "DUS": "first",
-                  "MAX": "first"
-              })
-        )
+        # Agrupación y cálculo de UNI por cantidad de registros
+        df_agrupado = df.groupby(["contrato", "BOX", "LOTE"]).agg({
+            "TARA": "first",
+            "SELLO": "first",
+            "RESERVA": "first",
+            "DUS": "first",
+            "MAX": "first"
+        })
         
-        # Recálculo de UNI post-agrupación
-        df_agrupado["UNI"] = df_agrupado["BULTOS"] / 8
+        # Contamos las filas para la columna UNI y reseteamos el index
+        df_agrupado["UNI"] = df.groupby(["contrato", "BOX", "LOTE"]).size()
+        df_agrupado = df_agrupado.reset_index()
+
+        # Multiplicamos por 8 para obtener los bultos
+        df_agrupado["BULTOS"] = df_agrupado["UNI"] * 8
+
         columnas_finales = ["BOX", "TARA", "BULTOS", "UNI", "LOTE", "SELLO", "RESERVA", "DUS", "MAX"]
 
         # Generación del Excel
@@ -1079,7 +1072,6 @@ def procesar_celulosa_sb(rutas):
         import traceback
         traceback.print_exc()
         return False, str(e), []
-
 # ==========================================
 #      LÓGICA DE SAG 
 # ==========================================
