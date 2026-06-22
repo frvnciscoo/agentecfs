@@ -2094,11 +2094,16 @@ CONFIG_ARCHIVOS = {
         {"id": "informe",  "nombre": "Informe",  "opcional": False,"descripcion": "Informe -> Informe Consolidado "},
         {"id": "zoopp",    "nombre": "Zoopp",    "opcional": False,"descripcion": "Archivo sacado de SAP, consulta ZOOPP"},
     ],
-    "Celulosa Unificada": [
+    "Celulosa BKP EKP UKP": [
         {"id": "programa", "nombre": "Programa", "opcional": False},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
-        {"id": "tools_cb", "nombre": "Tools CB (BKP/EKP/UKP)", "opcional": False},
-        {"id": "tools_sb", "nombre": "Tools SB (DP)", "opcional": False},
+        {"id": "tools",    "nombre": "Tools",    "opcional": False},
+        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
+    ],
+    "Celulosa DP": [
+        {"id": "programa", "nombre": "Programa", "opcional": False},
+        {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
+        {"id": "tools",    "nombre": "Tools",    "opcional": False}, # <--- AQUÍ SE CAMBIA
         {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
     ],
     "SAG": [
@@ -2280,9 +2285,8 @@ def mostrar_menu_materiales_arauco():
     col1, col2 = st.columns(2)
     
     with col1:
-        # Unificamos ambas celulosas en un solo botón
-        if st.button("**Celulosa (BKP, EKP, UKP y DP)**", use_container_width=True):
-            st.session_state.tipo_material = "Celulosa Unificada"
+        if st.button("**Celulosa DP**", use_container_width=True):
+            st.session_state.tipo_material = "Celulosa DP"
             st.rerun()
         
         if st.button("**Madera**", use_container_width=True):
@@ -2290,6 +2294,10 @@ def mostrar_menu_materiales_arauco():
             st.rerun()
     
     with col2:
+        if st.button("**Celulosa BKP EKP UKP**", use_container_width=True):
+            st.session_state.tipo_material = "Celulosa BKP EKP UKP"
+            st.rerun()
+        
         if st.button("**SAG**", use_container_width=True):
             st.session_state.tipo_material = "SAG"
             st.rerun()
@@ -2430,40 +2438,10 @@ def ejecutar_proceso():
         # Aquí corre tu código pesado
         if tipo_material == "Madera":
             exito, mensaje, archivos = procesar_madera(rutas)
-        elif tipo_material == "Celulosa Unificada":
-            archivos_totales = []
-            mensajes = []
-            hubo_error = False
-
-            st.write("⚙️ Procesando Celulosa BKP/EKP/UKP...")
-            # Preparar rutas para CB "engañando" a la función para que lea el tools_cb
-            rutas_cb = rutas.copy()
-            rutas_cb['tools'] = rutas['tools_cb']
-            exito_cb, msg_cb, arch_cb = procesar_celulosa_cb(rutas_cb)
-
-            if exito_cb:
-                archivos_totales.extend(arch_cb)
-                mensajes.append("CB: OK")
-            else:
-                hubo_error = True
-                mensajes.append(f"Error CB: {msg_cb}")
-
-            st.write("⚙️ Procesando Celulosa DP...")
-            # Preparar rutas para SB "engañando" a la función para que lea el tools_sb
-            rutas_sb = rutas.copy()
-            rutas_sb['tools'] = rutas['tools_sb']
-            exito_sb, msg_sb, arch_sb = procesar_celulosa_sb(rutas_sb)
-
-            if exito_sb:
-                archivos_totales.extend(arch_sb)
-                mensajes.append("DP: OK")
-            else:
-                hubo_error = True
-                mensajes.append(f"Error DP: {msg_sb}")
-
-            exito = not hubo_error
-            mensaje = " | ".join(mensajes) if hubo_error else "Ambos procesos de Celulosa generados correctamente."
-            archivos = archivos_totales
+        elif tipo_material == "Celulosa BKP EKP UKP":
+            exito, mensaje, archivos = procesar_celulosa_cb(rutas)
+        elif tipo_material == "Celulosa DP":
+            exito, mensaje, archivos = procesar_celulosa_sb(rutas)
         elif tipo_material == "SAG":
             exito, mensaje, archivos = procesar_sag(rutas)
         elif tipo_material == "CMPC Celulosa":
