@@ -744,18 +744,27 @@ def procesar_madera(rutas):
         return False, str(e), []
 
 # ==========================================
-#      LÓGICA DE Celulosa BKP EKP UKP
+#      LÓGICA UNIFICADA: CELULOSA (BKP/EKP/UKP y DP)
 # ==========================================
-def procesar_celulosa_cb(rutas):
-    st.info("Iniciando procesamiento de Celulosa BKP EKP UKP...")
+def procesar_celulosa(rutas):
+    st.info("Iniciando procesamiento de Celulosa (BKP/EKP/UKP y DP)...")
     try:
         programa = pd.read_excel(rutas['programa'])
-        tools_celulosa = pd.read_excel(rutas['tools'])
+        
+        # 1. Cargar Tools (soporta múltiples archivos si suben BKP y DP por separado)
+        rutas_tools = rutas['tools']
+        if isinstance(rutas_tools, str):
+            rutas_tools = [rutas_tools]
+            
+        lista_tools = []
+        for ruta in rutas_tools:
+            lista_tools.append(pd.read_excel(ruta))
+        tools = pd.concat(lista_tools, ignore_index=True)
 
+        # 2. Cargar Saldos
         if 'saldos' in rutas and rutas['saldos']:
             try:
                 saldos = pd.read_excel(rutas['saldos'])
-                st.success("Saldos cargado.")
             except:
                 saldos = pd.DataFrame(columns=["Entrega", "Box Saldo"])
         else:
@@ -765,6 +774,7 @@ def procesar_celulosa_cb(rutas):
         programa['Entrega'] = programa['Entrega'].astype(str).str.strip()
         saldos['Box Saldo'] = pd.to_numeric(saldos['Box Saldo'], errors='coerce')
         
+        # 3. Filtrar Históricos
         if 'historico' in rutas and rutas['historico']:
             excluidas = obtener_entregas_excluidas_hojas(rutas['historico'])
             if excluidas:
@@ -776,10 +786,14 @@ def procesar_celulosa_cb(rutas):
 
         entregas_con_saldo = saldos.loc[saldos["Box Saldo"] != 0, "Entrega"].unique()
         
+        # 4. Filtrar Programa solo para Celulosa válida
         prog_filtrado = programa[
             (~programa["Entrega"].isin(entregas_con_saldo)) & 
-            (programa["PRODINFO"].isin(["CEL BKP", "CEL UKP", "CEL EKP"]))
+            (programa["PRODINFO"].isin(["CEL BKP", "CEL UKP", "CEL EKP", "CEL DP"]))
         ].copy()
+
+        if prog_filtrado.empty:
+            return False, "No hay entregas válidas para Celulosa (BKP/EKP/UKP o DP) tras aplicar filtros.", []
 
         def obtener_linea(nav):
             nav = str(nav).upper().strip()
@@ -795,223 +809,104 @@ def procesar_celulosa_cb(rutas):
             ['Nave', 'DESTINO', 'RESERVA', 'PRODINFO', 'NAV_CLEAN']
         ].to_dict('index')
 
-        tools_celulosa['Contrato'] = tools_celulosa['Contrato'].astype(str)
-        entregas_validas = prog_filtrado["Entrega"].unique()
-        tools_filtrado = tools_celulosa[
-            tools_celulosa["Contrato"].isin(entregas_validas)
-        ]
+        df_final_agrupado = pd.DataFrame()
 
-        df = tools_filtrado.copy()
-        df["Contenedor"] = df["Contenedor"].astype(str).str.strip()
-        df["Expedicion"] = df["Expedicion"].astype(str).str.strip()
-        
-        def normalizar_box(contenedor):
-            partes = contenedor.split('-')
-            if len(partes) == 3:
-                parte_media_normalizada = partes[1].zfill(6)
-                return f"{partes[0]}-{parte_media_normalizada}-{partes[2]}"
-            return contenedor
-
-        df["BOX"] = df["Contenedor"].apply(normalizar_box)
-
-        df["TARA"] = df["Tara"]
-        df["LOTE"] = df["Expedicion"]
-        df["BULTOS"] = df["Cantidad"]
-        df["UNI"] = df["BULTOS"] / 8
-        df["SELLO"] = df["Sello_linea"]
-        df["RESERVA"] = df["Reserva"]
-        df["DUS"] = df["Orden_Embarque"]
-        df["MAX"] = df["Max_Gross"]
-
-        df_agrupado = (
-            df.groupby(["Contrato", "BOX", "LOTE"], as_index=False)
-              .agg({
-                  "TARA": "first",
-                  "BULTOS": "sum",
-                  "SELLO": "first",
-                  "RESERVA": "first",
-                  "DUS": "first",
-                  "MAX": "first"
-              })
-        )
-        
-        df_agrupado["UNI"] = df_agrupado["BULTOS"] / 8
-        columnas_finales = ["BOX", "TARA", "BULTOS", "UNI", "LOTE", "SELLO", "RESERVA", "DUS", "MAX"]
-        
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for contrato, data in df_agrupado.groupby("Contrato"):
-                data_limpia = data[columnas_finales]
+        # ==========================================
+        #   SUB-PROCESO A: CELULOSA BKP / EKP / UKP
+        # ==========================================
+        prog_cb = prog_filtrado[prog_filtrado["PRODINFO"].isin(["CEL BKP", "CEL UKP", "CEL EKP"])]
+        if not prog_cb.empty:
+            if "Contrato" in tools.columns and "Expedicion" in tools.columns:
+                entregas_validas_cb = prog_cb["Entrega"].unique()
+                tools_cb = tools[tools["Contrato"].astype(str).isin(entregas_validas_cb)].copy()
                 
-                data_limpia.to_excel(writer, sheet_name=str(contrato), index=False, startrow=5)
-                
-                ws = writer.sheets[str(contrato)]
-                meta = metadata_dict.get(str(contrato), {})
-                
-                datos_cabecera = {
-                    'nave': meta.get('Nave', ''),
-                    'destino': meta.get('DESTINO', ''),
-                    'reserva': meta.get('RESERVA', ''),
-                    'contrato': str(contrato),
-                    'exportador': "ARAUCO",
-                    'embarcador': "CELULOSA ARAUCO",
-                    'carga': meta.get('PRODINFO', ''),
-                    'linea': meta.get('NAV_CLEAN', '')
-                }
-                agregar_cabecera_arauco(ws, datos_cabecera)
+                if not tools_cb.empty:
+                    tools_cb["Contenedor"] = tools_cb["Contenedor"].astype(str).str.strip()
+                    tools_cb["Expedicion"] = tools_cb["Expedicion"].astype(str).str.strip()
+                    
+                    def normalizar_box(contenedor):
+                        partes = contenedor.split('-')
+                        if len(partes) == 3:
+                            parte_media_normalizada = partes[1].zfill(6)
+                            return f"{partes[0]}-{parte_media_normalizada}-{partes[2]}"
+                        return contenedor
 
-        wb = load_workbook(output)
+                    tools_cb["BOX"] = tools_cb["Contenedor"].apply(normalizar_box)
+                    tools_cb["TARA"] = tools_cb["Tara"]
+                    tools_cb["LOTE"] = tools_cb["Expedicion"]
+                    tools_cb["BULTOS"] = tools_cb["Cantidad"]
+                    tools_cb["SELLO"] = tools_cb["Sello_linea"]
+                    tools_cb["RESERVA"] = tools_cb["Reserva"]
+                    tools_cb["DUS"] = tools_cb["Orden_Embarque"]
+                    tools_cb["MAX"] = tools_cb.get("Max_Gross", 999999)
 
-        for sheetname in wb.sheetnames:
-            ws = wb[sheetname]
-            
-            header_row_idx = 6
-            idx_box = 1
-            for cell in ws[header_row_idx]:
-                if cell.value == "BOX":
-                    idx_box = cell.col_idx
-                    break
-            
-            max_row = ws.max_row
-            start = header_row_idx + 1
-            
-            while start <= max_row:
-                valor = ws.cell(row=start, column=idx_box).value
-                end = start
-                while end + 1 <= max_row and ws.cell(row=end + 1, column=idx_box).value == valor:
-                    end += 1
-                
-                if end > start:
-                    ws.merge_cells(start_row=start, start_column=idx_box, end_row=end, end_column=idx_box)
-                    ws.cell(row=start, column=idx_box).alignment = Alignment(vertical="center")
-                
-                start = end + 1
-
-        final_output = BytesIO()
-        wb.save(final_output)
-        final_output.seek(0)
-
-        return True, "Archivo generado correctamente", [("CelulosaBKPEKPUKP.xlsx", final_output)]
-
-    except Exception as e:
-        st.error(f"Error en procesamiento: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False, str(e), []
-
-# ==========================================
-#      LÓGICA DE CELULOSA DP (Actualizada a Tools con ajuste UNI/BULTOS)
-# ==========================================
-def procesar_celulosa_sb(rutas):
-    st.info("Iniciando procesamiento de Celulosa DP...")
-    try:
-        programa = pd.read_excel(rutas['programa'])
-        tools = pd.read_excel(rutas['tools'])
-
-        if 'saldos' in rutas and rutas['saldos']:
-            try:
-                saldos = pd.read_excel(rutas['saldos'])
-            except:
-                saldos = pd.DataFrame(columns=["Entrega", "Box Saldo"])
-        else:
-            saldos = pd.DataFrame(columns=["Entrega", "Box Saldo"])
-
-        saldos['Entrega'] = saldos['Entrega'].astype(str).str.strip()
-        programa['Entrega'] = programa['Entrega'].astype(str).str.strip()
-        saldos['Box Saldo'] = pd.to_numeric(saldos['Box Saldo'], errors='coerce')
-        
-        if 'historico' in rutas and rutas['historico']:
-            excluidas = obtener_entregas_excluidas_hojas(rutas['historico'])
-            if excluidas:
-                st.info(f"Filtrando contra {len(excluidas)} entregas históricas (Pestañas)...")
-                programa = programa[~programa['Entrega'].isin(excluidas)].copy()
-                
-                if programa.empty:
-                    return False, "Todas las entregas del programa ya existen como hojas en los históricos adjuntos.", []
-
-        entregas_con_saldo = saldos.loc[saldos["Box Saldo"] != 0, "Entrega"].unique()
-        
-        prog_filtrado = programa[
-            (~programa["Entrega"].isin(entregas_con_saldo)) & 
-            (programa["PRODINFO"].isin(["CEL DP"]))
-        ].copy()
-        
-        def obtener_linea(nav):
-            nav = str(nav).upper().strip()
-            if "MSC" in nav: return "MSC"
-            if "ONEY" in nav: return "ONE"
-            if "HLL" in nav: return "HAPAG LLOYD"
-            if "MAERSK" in nav or "ML" in nav: return "MAERSK"
-            return nav
-
-        prog_filtrado['NAV_CLEAN'] = prog_filtrado['NAV'].apply(obtener_linea)
-        
-        metadata_dict = prog_filtrado.set_index('Entrega')[
-            ['Nave', 'DESTINO', 'RESERVA', 'PRODINFO', 'NAV_CLEAN']
-        ].to_dict('index')
-
-        entregas_validas = prog_filtrado["Entrega"].unique()
-        
-        # --- LÓGICA HOMOLOGADA AL ARCHIVO TOOLS ---
-        if "Orden_Pedido" in tools.columns:
-            tools["Orden_Pedido"] = tools["Orden_Pedido"].astype(str).str.strip()
-            tools = tools[tools["Orden_Pedido"].isin(entregas_validas)]
-        else:
-            return False, "El archivo Tools no tiene la columna 'Orden_Pedido'.", []
-
-        # Construir el Contenedor (BOX)
-        tools['Cnt_Sigla'] = tools['Cnt_Sigla'].astype(str).str.strip()
-        tools['Cnt_Nro'] = tools['Cnt_Nro'].astype(str).str.strip()
-        tools['Cnt_DV'] = tools['Cnt_DV'].astype(str).str.strip()
-
-        def normalizar_box_tools(row):
-            sigla = str(row['Cnt_Sigla']).strip()
-            val_num = str(row['Cnt_Nro'])
-            if '.' in val_num:
-                numero = val_num.split('.')[0].strip()
+                    df_agrupado_cb = (
+                        tools_cb.groupby(["Contrato", "BOX", "LOTE"], as_index=False)
+                          .agg({
+                              "TARA": "first", "BULTOS": "sum", "SELLO": "first",
+                              "RESERVA": "first", "DUS": "first", "MAX": "first"
+                          })
+                    )
+                    df_agrupado_cb["UNI"] = df_agrupado_cb["BULTOS"] / 8
+                    df_final_agrupado = pd.concat([df_final_agrupado, df_agrupado_cb], ignore_index=True)
             else:
-                numero = val_num.strip()
-            dv = str(row['Cnt_DV']).strip()
-            numero = numero.zfill(6)
-            return f"{sigla}-{numero}-{dv}"
+                st.warning("El archivo Tools no contiene las columnas necesarias para BKP/EKP/UKP (Contrato, Expedicion).")
 
-        tools['BOX'] = tools.apply(normalizar_box_tools, axis=1)
+        # ==========================================
+        #   SUB-PROCESO B: CELULOSA DP
+        # ==========================================
+        prog_dp = prog_filtrado[prog_filtrado["PRODINFO"].isin(["CEL DP"])]
+        if not prog_dp.empty:
+            if "Orden_Pedido" in tools.columns and "Cnt_Sigla" in tools.columns:
+                entregas_validas_dp = prog_dp["Entrega"].unique()
+                tools_dp = tools[tools["Orden_Pedido"].astype(str).str.strip().isin(entregas_validas_dp)].copy()
+                
+                if not tools_dp.empty:
+                    tools_dp['Cnt_Sigla'] = tools_dp['Cnt_Sigla'].astype(str).str.strip()
+                    tools_dp['Cnt_Nro'] = tools_dp['Cnt_Nro'].astype(str).str.strip()
+                    tools_dp['Cnt_DV'] = tools_dp['Cnt_DV'].astype(str).str.strip()
 
-        # Mapeo de columnas con la nueva estructura
-        df = tools.copy()
-        df["contrato"] = df["Orden_Pedido"]
-        df["TARA"] = df["Tara"]
-        df["LOTE"] = df["Marca"]
-        df["SELLO"] = df["Sello_linea"]
-        df["RESERVA"] = df["Reserva"]
-        df["DUS"] = df["Orden_Embarque"]
-        df["MAX"] = df.get("Max_Gross", 999999) 
+                    def normalizar_box_tools(row):
+                        sigla = str(row['Cnt_Sigla']).strip()
+                        val_num = str(row['Cnt_Nro']).split('.')[0].strip() if '.' in str(row['Cnt_Nro']) else str(row['Cnt_Nro']).strip()
+                        dv = str(row['Cnt_DV']).strip()
+                        return f"{sigla}-{val_num.zfill(6)}-{dv}"
 
-        # Limpieza de sellos nulos o vacíos
-        df = df[df["SELLO"].notna() & (df["SELLO"].astype(str).str.strip() != "")]
+                    tools_dp['BOX'] = tools_dp.apply(normalizar_box_tools, axis=1)
+                    tools_dp["Contrato"] = tools_dp["Orden_Pedido"].astype(str).str.strip() # Homologar nombre
+                    tools_dp["TARA"] = tools_dp["Tara"]
+                    tools_dp["LOTE"] = tools_dp["Marca"]
+                    tools_dp["SELLO"] = tools_dp["Sello_linea"]
+                    tools_dp["RESERVA"] = tools_dp["Reserva"]
+                    tools_dp["DUS"] = tools_dp["Orden_Embarque"]
+                    tools_dp["MAX"] = tools_dp.get("Max_Gross", 999999) 
 
-        # Agrupación y cálculo de UNI por cantidad de registros
-        df_agrupado = df.groupby(["contrato", "BOX", "LOTE"]).agg({
-            "TARA": "first",
-            "SELLO": "first",
-            "RESERVA": "first",
-            "DUS": "first",
-            "MAX": "first"
-        })
-        
-        # Contamos las filas para la columna UNI y reseteamos el index
-        df_agrupado["UNI"] = df.groupby(["contrato", "BOX", "LOTE"]).size()
-        df_agrupado = df_agrupado.reset_index()
+                    tools_dp = tools_dp[tools_dp["SELLO"].notna() & (tools_dp["SELLO"].astype(str).str.strip() != "")]
 
-        # Multiplicamos por 8 para obtener los bultos
-        df_agrupado["BULTOS"] = df_agrupado["UNI"] * 8
+                    df_agrupado_dp = tools_dp.groupby(["Contrato", "BOX", "LOTE"]).agg({
+                        "TARA": "first", "SELLO": "first", "RESERVA": "first",
+                        "DUS": "first", "MAX": "first"
+                    })
+                    
+                    df_agrupado_dp["UNI"] = tools_dp.groupby(["Contrato", "BOX", "LOTE"]).size()
+                    df_agrupado_dp = df_agrupado_dp.reset_index()
+                    df_agrupado_dp["BULTOS"] = df_agrupado_dp["UNI"] * 8
+                    
+                    df_final_agrupado = pd.concat([df_final_agrupado, df_agrupado_dp], ignore_index=True)
+            else:
+                st.warning("El archivo Tools no contiene las columnas necesarias para DP (Orden_Pedido, Cnt_Sigla).")
+
+        # ==========================================
+        #   GENERAR EXCEL FINAL UNIFICADO
+        # ==========================================
+        if df_final_agrupado.empty:
+            return False, "No se pudo cruzar información de Tools con el Programa. Verifique las entregas.", []
 
         columnas_finales = ["BOX", "TARA", "BULTOS", "UNI", "LOTE", "SELLO", "RESERVA", "DUS", "MAX"]
-
-        # Generación del Excel
+        
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for contrato, data in df_agrupado.groupby("contrato"):
+            for contrato, data in df_final_agrupado.groupby("Contrato"):
                 hoja = str(contrato)
                 data_limpia = data[columnas_finales]
                 
@@ -1030,24 +925,18 @@ def procesar_celulosa_sb(rutas):
                     'carga': meta.get('PRODINFO', ''),
                     'linea': meta.get('NAV_CLEAN', '')
                 }
-                
                 agregar_cabecera_arauco(ws, datos_cabecera)
-        
+
         wb = load_workbook(output)
 
         # Merge de celdas BOX para visualización
         for sheetname in wb.sheetnames:
             ws = wb[sheetname]
-            
             header_row_idx = 6
-            idx_box = 1
-            for cell in ws[header_row_idx]:
-                if cell.value == "BOX":
-                    idx_box = cell.col_idx
-                    break
+            idx_box = next((cell.col_idx for cell in ws[header_row_idx] if cell.value == "BOX"), 1)
             
-            max_row = ws.max_row
             start = header_row_idx + 1
+            max_row = ws.max_row
             
             while start <= max_row:
                 valor = ws.cell(row=start, column=idx_box).value
@@ -1065,7 +954,7 @@ def procesar_celulosa_sb(rutas):
         wb.save(final_output)
         final_output.seek(0)
 
-        return True, "Archivo generado correctamente", [("RemateCelulosaDP.xlsx", final_output)]
+        return True, "Archivo consolidado generado correctamente", [("RemateCelulosa.xlsx", final_output)]
 
     except Exception as e:
         st.error(f"Error en procesamiento: {str(e)}")
@@ -2094,16 +1983,10 @@ CONFIG_ARCHIVOS = {
         {"id": "informe",  "nombre": "Informe",  "opcional": False,"descripcion": "Informe -> Informe Consolidado "},
         {"id": "zoopp",    "nombre": "Zoopp",    "opcional": False,"descripcion": "Archivo sacado de SAP, consulta ZOOPP"},
     ],
-    "Celulosa BKP EKP UKP": [
-        {"id": "programa", "nombre": "Programa", "opcional": False},
+    "Celulosa": [
+        {"id": "programa", "nombre": "Programa", "opcional": False, "descripcion": "Programa que contiene entregas BKP/EKP/UKP y/o DP"},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
-        {"id": "tools",    "nombre": "Tools",    "opcional": False},
-        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
-    ],
-    "Celulosa DP": [
-        {"id": "programa", "nombre": "Programa", "opcional": False},
-        {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
-        {"id": "tools",    "nombre": "Tools",    "opcional": False}, # <--- AQUÍ SE CAMBIA
+        {"id": "tools",    "nombre": "Tools",    "opcional": False, "multiple": True, "descripcion": "Puede subir uno o varios archivos Tools"},
         {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
     ],
     "SAG": [
@@ -2285,8 +2168,8 @@ def mostrar_menu_materiales_arauco():
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("**Celulosa DP**", use_container_width=True):
-            st.session_state.tipo_material = "Celulosa DP"
+        if st.button("**Celulosa**", use_container_width=True):
+            st.session_state.tipo_material = "Celulosa"
             st.rerun()
         
         if st.button("**Madera**", use_container_width=True):
@@ -2294,10 +2177,6 @@ def mostrar_menu_materiales_arauco():
             st.rerun()
     
     with col2:
-        if st.button("**Celulosa BKP EKP UKP**", use_container_width=True):
-            st.session_state.tipo_material = "Celulosa BKP EKP UKP"
-            st.rerun()
-        
         if st.button("**SAG**", use_container_width=True):
             st.session_state.tipo_material = "SAG"
             st.rerun()
@@ -2438,10 +2317,8 @@ def ejecutar_proceso():
         # Aquí corre tu código pesado
         if tipo_material == "Madera":
             exito, mensaje, archivos = procesar_madera(rutas)
-        elif tipo_material == "Celulosa BKP EKP UKP":
-            exito, mensaje, archivos = procesar_celulosa_cb(rutas)
-        elif tipo_material == "Celulosa DP":
-            exito, mensaje, archivos = procesar_celulosa_sb(rutas)
+        elif tipo_material == "Celulosa":
+            exito, mensaje, archivos = procesar_celulosa(rutas)
         elif tipo_material == "SAG":
             exito, mensaje, archivos = procesar_sag(rutas)
         elif tipo_material == "CMPC Celulosa":
