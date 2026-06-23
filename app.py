@@ -178,22 +178,20 @@ def leer_y_limpiar_excel(ruta, **kwargs):
     df = pd.read_excel(ruta, **kwargs)
     return limpiar_dataframe(df)
 # ==========================================
-#      LÓGICA DE MADERA (CORREGIDA)
+#      LÓGICA DE MADERA (NUEVA VERSIÓN TOOLS)
 # ==========================================
 def procesar_madera(rutas):
     """
-    1. Separa entregas compuestas (ej: "A / B" -> fila A, fila B).
-    2. Agrupa por Producto para respetar pesos/volúmenes.
-    3. Genera cabecera personalizada en Remate.
+    Versión optimizada usando archivo TOOLS.
+    Cruza directamente el Programa con el archivo Tools, omitiendo las antiguas
+    bases de Despacho, Detalle, Informe y Zoopp.
     """
-    st.info("Iniciando procesamiento de Madera...")
+    st.info("Iniciando procesamiento de Madera (Vía Tools)...")
     
     def separar_entregas_multiples(df, col_entrega):
         if col_entrega not in df.columns:
             return df
-        
-        df[col_entrega] = df[col_entrega].astype(str)
-        df[col_entrega] = df[col_entrega].str.split('/')
+        df[col_entrega] = df[col_entrega].astype(str).str.split('/')
         df = df.explode(col_entrega)
         df[col_entrega] = df[col_entrega].str.strip().str.replace(r'\.0$', '', regex=True)
         return df
@@ -206,7 +204,6 @@ def procesar_madera(rutas):
         if 'historico' in rutas and rutas['historico']:
             excluidas = obtener_entregas_excluidas(rutas['historico'])
             if excluidas:
-                st.info(f"Filtrando {len(excluidas)} entregas históricas...")
                 programa['Entrega_Str'] = programa['Entrega'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
                 programa = programa[~programa['Entrega_Str'].isin(excluidas)].copy()
                 programa = programa.drop(columns=['Entrega_Str'])
@@ -218,255 +215,131 @@ def procesar_madera(rutas):
             try:
                 saldos = leer_y_limpiar_excel(rutas['saldos'])
                 saldos = separar_entregas_multiples(saldos, "Entrega")
-                st.success("Archivo Saldos cargado y normalizado.")
             except Exception as e:
-                st.warning(f"Error leyendo Saldos: {e}. Continuando sin él.")
                 saldos = pd.DataFrame(columns=["Entrega", "Box Saldo"])
         else:
             saldos = pd.DataFrame(columns=["Entrega", "Box Saldo"])
 
-        # 3. Cargar DESPACHO
-        despacho = leer_y_limpiar_excel(rutas['despacho'])
-        
-        # 4. Cargar DETALLE
-        detalle = leer_y_limpiar_excel(rutas['detalle'])
-        
-        # 5. Cargar INFORME
-        consolidado = leer_y_limpiar_excel(rutas['informe'])
-        
-        # 6. Cargar ZOOPP
-        ruta_zoopp = rutas['zoopp']
-        if ruta_zoopp.lower().endswith('.dbf'):
-            st.info("Detectado archivo DBF. Cargando con dbfread...")
-            try:
-                table = DBF(ruta_zoopp, encoding='latin-1', char_decode_errors='ignore')
-                zoopp = pd.DataFrame(iter(table))
-                zoopp.columns = [c.lower() for c in zoopp.columns]
-                zoopp = limpiar_dataframe(zoopp)
-                mapeo_dbf = {
-                    "loteof": "loteof,C,10", "vollote": "vollote,C,15",
-                    "posped": "posped,N,6,0", "desmat": "desmat,C,40"
-                }
-                zoopp = zoopp.rename(columns=mapeo_dbf)
-            except Exception as e:
-                st.error(f"Error leyendo DBF: {e}")
-                raise e
-        else:
-            zoopp = leer_y_limpiar_excel(rutas['zoopp'])
-
-        # --- RENOMBRAR COLUMNAS DESPACHO ---
-        mapa_columnas_despacho = {
-            "cor_ano": "COR_ANO,N,16,0", "cor_mov": "COR_MOV,N,16,0", "sigla": "SIGLA,C,4",
-            "numero": "NUMERO,N,16,0", "dv": "DV,C,1", "cliente": "CLIENTE,C,20",
-            "cod_puerto_destino": "COD_PUERTO,C,3", "puerto_destino": "PUERTO_DES,C,40",
-            "cod_puerto_descarga": "COD_PUERTO1,C,3", "puerto_descarga": "PUERTO_DES1,C,40",
-            "operacion": "OPERACION,N,16,0", "nave": "NAVE,C,40", "nro_reserva": "NRO_RESERV,C,15",
-            "orden_embarque": "ORDEN_EMBA,C,255", "contrato": "CONTRATO,C,50", "deposito": "DEPOSITO,C,15",
-            "fecha_despacho": "FECHA_DESP,D", "turno": "TURNO,N,16,0", "despachador": "DESPACHADO,C,100",
-            "status": "STATUS,C,1", "sello": "SELLO,C,15", "peso": "PESO,N,16,0", "fechaanula": "FECHAANULA,D",
-            "material": "MATERIAL,C,2", "des_fotos": "DES_FOTOS,C,25", "producto": "PRODUCTO,C,100",
-            "isocode": "ISOCODE,C,4", "linea_cnt": "LINEA_CNT,C,15", "cant_paquetes": "CANT_PAQUE,N,16,0",
-            "ite_volumen_d": "ITE_VOLUME,N,16,0", "terminal": "TERMINAL,C,100"
-        }
-        despacho = despacho.rename(columns=mapa_columnas_despacho)
-
-        despacho = separar_entregas_multiples(despacho, "CONTRATO,C,50")
-
-        # --- FILTRADO Y LÓGICA ---
         saldos['Box Saldo'] = pd.to_numeric(saldos['Box Saldo'], errors='coerce')
-        
         entregas_con_saldo = saldos.loc[saldos["Box Saldo"] != 0, "Entrega"].unique()
+        
+        # Filtrar solo productos de Madera válidos y sin saldos cerrados
         prog_filtrado = programa[
             (~programa["Entrega"].isin(entregas_con_saldo)) & 
             (programa["PRODINFO"].isin(["M.ASER.VERDE", "M.ASER. SECA", "M&B/SHOP","CLEARS","MDF MOLDURAS","MOLDURAS","BLANKS","SHOP","MOULDING&BETTER","M.PALL.SECA","M.PALL.VERDE","BASAS","AGLOMERADOS","MDF PANEL","PLYWOOD","TRUPAN","TABLERO","OSB","CHAPAS"]))
         ].copy()
 
+        if prog_filtrado.empty:
+             return False, "No hay entregas válidas en el Programa tras aplicar los filtros de históricos y saldos.", []
+
         columnas_prog = ["Entrega", "Nave", "PRODINFO", "RESERVA", "DESTINO"]
+        # Por si la cabecera viene como "NAV"
+        if "Nave" not in prog_filtrado.columns and "NAV" in prog_filtrado.columns:
+            prog_filtrado = prog_filtrado.rename(columns={"NAV": "Nave"})
+        
         prog_filtrado = prog_filtrado[columnas_prog]
-        
-        try:
-            nave_header = prog_filtrado["Nave"].dropna().iloc[0]
-        except:
-            nave_header = "SIN NAVE"
+        nave_header = prog_filtrado["Nave"].dropna().iloc[0] if not prog_filtrado["Nave"].dropna().empty else "SIN NAVE"
 
-        # Construir Contenedor Despacho
-        despacho['SIGLA,C,4'] = despacho['SIGLA,C,4'].astype(str).str.strip()
-        despacho['NUMERO,N,16,0'] = despacho['NUMERO,N,16,0'].astype(str).str.strip()
-        despacho['DV,C,1'] = despacho['DV,C,1'].astype(str).str.strip()
+        # 3. Cargar TOOLS (Puede ser múltiple)
+        rutas_tools = rutas['tools']
+        if isinstance(rutas_tools, str):
+            rutas_tools = [rutas_tools]
+            
+        lista_tools = []
+        for ruta in rutas_tools:
+            lista_tools.append(leer_y_limpiar_excel(ruta))
+        tools = pd.concat(lista_tools, ignore_index=True)
 
+        # Construir Contenedor
         def construir_contenedor(row):
-            sigla = row['SIGLA,C,4']
-            numero = row['NUMERO,N,16,0'].zfill(6)
-            dv = row['DV,C,1']
+            sigla = str(row.get('Cnt_Sigla', '')).strip()
+            val_num = str(row.get('Cnt_Nro', ''))
+            if '.' in val_num: numero = val_num.split('.')[0].strip()
+            else: numero = val_num.strip()
+            dv = str(row.get('Cnt_DV', '')).strip()
+            if '.' in dv: dv = dv.split('.')[0].strip()
+            numero = numero.zfill(6)
             return f"{sigla}-{numero}-{dv}"
 
-        def construir_NDESPACHO(row):
-            cor1 = row['COR_ANO,N,16,0']
-            cor2 = row['COR_MOV,N,16,0']
-            return f"{cor1}-{cor2}"
+        tools['CONTENEDOR'] = tools.apply(construir_contenedor, axis=1)
 
-        despacho['NDESPACHO'] = despacho.apply(construir_NDESPACHO, axis=1)
-        despacho['CONTENEDOR'] = despacho.apply(construir_contenedor, axis=1)
-
-        # Merge Programa - Despacho
-        prog_filtrado = prog_filtrado.merge(
-            despacho[["CONTENEDOR", "SELLO,C,15", "NDESPACHO", "CONTRATO,C,50", "PESO,N,16,0","NUMERO,N,16,0"]].rename(columns={"CONTRATO,C,50": "Entrega"}),
-            on="Entrega", how="inner"
-        )
-
-        # Procesar Detalle
-        mapa_detalle = {
-            "ano": "ANO,N,16,0", "numero": "NUMERO,N,16,0", "fecha_consolidacion": "FECHA_CONS,D",
-            "turno": "TURNO,N,16,0", "linea": "LINEA,C,15", "operacion": "OPERACION,N,16,0",
-            "nave": "NAVE,C,47", "cliente": "CLIENTE,C,20", "embarcador": "EMBARCADOR,C,20",
-            "reserva": "RESERVA,C,30", "pedido": "PEDIDO,C,50", "producto": "PRODUCTO,C,100",
-            "agrupacion": "AGRUPACION,C,50", "fotos": "FOTOS,C,25", "pto_descarga": "PTO_DESCAR,C,40",
-            "pto_final": "PTO_FINAL,C,40", "isocode": "ISOCODE,C,4", "medida": "MEDIDA,N,16,0",
-            "sigla_cnt": "SIGLA_CNT,C,4", "contenedor": "CONTENEDOR,C,9", "tara": "TARA,N,16,0",
-            "neto": "NETO,N,16,0", "fardos": "FARDOS,N,16,0", "unidades": "UNIDADES,N,16,0",
-            "volumen": "VOLUMEN,N,17,4", "sello_linea": "SELLO_LINE,C,20", "sello_inspector": "SELLO_INSP,C,20",
-            "dus": "DUS,C,255", "inf_gate": "INF_GATE,C,50", "embarcado": "EMBARCADO,C,1",
-            "origen_carga": "ORIGEN_CAR,C,100", "deposito_origen": "DEPOSITO_O,C,20",
-            "deposito_destino": "DEPOSITO_D,C,20", "fecha_packing": "FECHA_PACK,D",
-            "cancelado": "CANCELADO,C,1", "observacion": "OBSERVACIO,C,255", "ind_aforo": "IND_AFORO,C,1",
-            "restriccion_peso": "RESTRICCIO,N,16,0", "cod_nro_cnt": "COD_NRO_CN,N,16,0",
-            "cod_dv_cnt": "COD_DV_CNT,C,1", "nro_despacho": "NRO_DESPAC,C,15", "peso_vgm": "PESO_VGM,N,17,2"
-        }
-        detalle = detalle.rename(columns=mapa_detalle)
-        detalle['SELLO_LINE,C,20'] = detalle['SELLO_LINE,C,20'].astype(str).str.strip()
-        detalle = detalle.drop_duplicates(subset=['SELLO_LINE,C,20'])
-
-        prog_filtrado = prog_filtrado.merge(
-            detalle[['SELLO_LINE,C,20', 'SELLO_INSP,C,20', 'DUS,C,255', 'RESTRICCIO,N,16,0','FECHA_CONS,D']],
-            left_on='SELLO,C,15', right_on='SELLO_LINE,C,20', how='left'
-        )
-        prog_filtrado.drop(columns=['SELLO_LINE,C,20'], inplace=True)
-
-        # Procesar Informe (Consolidado)
-        mapa_consolidado = {
-            "operacion": "OPERACION,N,16,0", "nave": "NAVE,C,40", "linea": "LINEA,C,15",
-            "cliente": "CLIENTE,C,20", "proveedor": "PROVEEDOR,C,20", "cod_pto_destino": "COD_PTO_DE,C,3",
-            "pto_destino": "PTO_DESTIN,C,40", "contrato": "CONTRATO,C,50", "sigla_cnt": "SIGLA_CNT,C,4",
-            "nro_cnt": "NRO_CNT,N,16,0", "dv_cnt": "DV_CNT,C,1", "tara_cnt": "TARA_CNT,N,16,0",
-            "orden_embarque": "ORDEN_EMBA,C,255", "sello": "SELLO,C,15", "orden_pedido": "ORDEN_PEDI,C,12",
-            "codigo_barra": "CODIGO_BAR,C,50", "nro_paquete": "NRO_PAQUET,C,50", "material": "MATERIAL,C,50",
-            "marca": "MARCA,C,20", "volumen": "VOLUMEN,N,17,4", "unid_volumen": "UNID_VOLUM,C,4",
-            "espesor": "ESPESOR,N,17,4", "unid_espesor": "UNID_ESPES,C,4", "ancho": "ANCHO,N,17,4",
-            "unid_ancho": "UNID_ANCHO,C,4", "largo": "LARGO,N,17,4", "unid_largo": "UNID_LARGO,C,4",
-            "cant_piezas": "CANT_PIEZA,N,16,0", "peso": "PESO,N,17,4", "terminal": "TERMINAL,C,100",
-            "bodega": "BODEGA,C,15", "fila": "FILA,C,4", "columna": "COLUMNA,C,4", "reserva": "RESERVA,C,30",
-            "Cantidad_Pqts": "CANTIDAD_P,N,16,0","maxgross":"MAXGROSS"
-        }
-        consolidado = consolidado.rename(columns=mapa_consolidado)
-        if "MAXGROSS" not in consolidado.columns:
-            consolidado["MAXGROSS"] = 999999
-        consolidado['NRO_CNT,N,16,0'] = consolidado['NRO_CNT,N,16,0'].astype(str).str.strip()
-        consolidado['SIGLA_CNT,C,4'] = consolidado['SIGLA_CNT,C,4'].astype(str).str.strip()
-        consolidado['DV_CNT,C,1'] = consolidado['DV_CNT,C,1'].astype(str).str.strip()
-
-        def construir_contenedor_2(row):
-            sigla = row['SIGLA_CNT,C,4']
-            numero = row['NRO_CNT,N,16,0'].zfill(6)
-            dv = row['DV_CNT,C,1']
-            return f"{sigla}-{numero}-{dv}"
-
-        consolidado['CONTENEDOR_2'] = consolidado.apply(construir_contenedor_2, axis=1)
-        consolidado_filtrado = consolidado[
-            consolidado["CONTENEDOR_2"].isin(prog_filtrado["CONTENEDOR"])
-        ].copy()
-
-        columnas_consolidado = [
-            "CONTENEDOR_2", "TARA_CNT,N,16,0", "MATERIAL,C,50",
-            "CODIGO_BAR,C,50", "ORDEN_PEDI,C,12",
-            "PESO,N,17,4", "CONTRATO,C,50","MAXGROSS"
-        ]
-        consolidado_filtrado = consolidado_filtrado[columnas_consolidado]
-        zoopp['loteof,C,10'] = zoopp['loteof,C,10'].astype(str).str.strip()
-        zoopp['clase_merc'] = zoopp['clase_merc'].astype(str).str.strip()
-        zoopp = zoopp.drop_duplicates(subset=['loteof,C,10'])
-        consolidado_filtrado['CODIGO_BAR,C,50'] = (
-            consolidado_filtrado['CODIGO_BAR,C,50']
-            .astype(str)
-            .str.strip()
-        )
-
-        consolidado_filtrado = consolidado_filtrado.merge(
-            zoopp[['loteof,C,10', 'clase_merc']],
-            left_on='CODIGO_BAR,C,50',
-            right_on='loteof,C,10',
-            how='left'
-        )
-
-        consolidado_filtrado.drop(columns=['loteof,C,10'], inplace=True)
-
-        prog_filtrado['PRODINFO'] = prog_filtrado['PRODINFO'].astype(str).str.strip()
-
-        resultado_final = consolidado_filtrado.merge(
-            prog_filtrado,
-            left_on=['CONTENEDOR_2', 'clase_merc'],
-            right_on=['CONTENEDOR', 'PRODINFO'],
-            how='left'
-        )
-
-        # Procesar ZOOPP
-        zoopp['loteof,C,10'] = zoopp['loteof,C,10'].astype(str).str.strip()
-        zoopp['vollote,C,15'] = zoopp['vollote,C,15'].astype(str).str.strip()
-        resultado_final['CODIGO_BAR,C,50'] = resultado_final['CODIGO_BAR,C,50'].astype(str).str.strip()
-        zoopp = zoopp.drop_duplicates(subset=['loteof,C,10'])
-
-        resultado_filtrado_zoopp = resultado_final[resultado_final["CODIGO_BAR,C,50"].isin(zoopp["loteof,C,10"])].copy()
-        resultado_filtrado_zoopp = resultado_filtrado_zoopp.merge(
-            zoopp[['loteof,C,10', 'posped,N,6,0', 'desmat,C,40','vollote,C,15','clase_merc']],
-            left_on='CODIGO_BAR,C,50', right_on='loteof,C,10', how='left'
-        )
-
-        resultado_filtrado_zoopp["PESO,N,16,0"] = pd.to_numeric(resultado_filtrado_zoopp["PESO,N,16,0"], errors='coerce')
-        resultado_filtrado_zoopp["TARA_CNT,N,16,0"] = pd.to_numeric(resultado_filtrado_zoopp["TARA_CNT,N,16,0"], errors='coerce')
-        resultado_filtrado_zoopp["VGM"] = (resultado_filtrado_zoopp["PESO,N,16,0"].fillna(0) + resultado_filtrado_zoopp["TARA_CNT,N,16,0"].fillna(0))
-        resultado_filtrado_zoopp.drop(columns=["PESO,N,16,0"], inplace=True)
-
-        resultado_filtrado_zoopp["vollote,C,15"] = (
-            resultado_filtrado_zoopp["vollote,C,15"].astype(str).str.replace(",", ".", regex=False)
-        )
-        resultado_filtrado_zoopp["vollote,C,15"] = pd.to_numeric(resultado_filtrado_zoopp["vollote,C,15"], errors='coerce')
-        resultado_filtrado_zoopp = resultado_filtrado_zoopp.dropna(subset=["vollote,C,15"])
+        # Normalizar Datos Matemáticos y Textos
+        tools['Peso_lote'] = pd.to_numeric(tools['Peso_lote'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        tools['Volumen_Lote'] = pd.to_numeric(tools['Volumen_Lote'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        tools['Tara'] = pd.to_numeric(tools['Tara'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         
-        resultado_filtrado_zoopp = resultado_filtrado_zoopp.drop_duplicates(
-            subset=["loteof,C,10", "Entrega", "CONTENEDOR_2"], 
-            keep="first"
+        # Formatear la fecha para que no de problemas al cruzar con Pandas
+        if 'Fecha_despacho' in tools.columns:
+            tools['Fecha_despacho'] = pd.to_datetime(tools['Fecha_despacho'], errors='coerce', dayfirst=True).dt.strftime('%d/%m/%Y')
+        else:
+            tools['Fecha_despacho'] = datetime.datetime.now().strftime('%d/%m/%Y')
+            
+        tools['Codigo_Barra'] = tools['Codigo_Barra'].astype(str).str.strip()
+        
+        # Eliminar posibles lotes duplicados arrastrados del Tools
+        tools = tools.drop_duplicates(subset=['Codigo_Barra'])
+
+        # Encontrar la columna de unión con el Programa (Usualmente Contrato u Orden_Pedido)
+        col_join_tools = 'Contrato' if 'Contrato' in tools.columns else 'Orden_Pedido'
+        if col_join_tools not in tools.columns:
+            return False, "El archivo Tools no contiene 'Contrato' ni 'Orden_Pedido' para cruzar con el Programa.", []
+
+        tools[col_join_tools] = tools[col_join_tools].astype(str).str.strip()
+        prog_filtrado["Entrega"] = prog_filtrado["Entrega"].astype(str).str.strip()
+
+        # Merge Principal (Programa + Tools)
+        resultado_final = tools.merge(
+            prog_filtrado,
+            left_on=col_join_tools,
+            right_on="Entrega",
+            how="inner"
         )
+
+        if resultado_final.empty:
+            return False, f"Ninguna entrega del Programa cruzó con la columna '{col_join_tools}' del archivo Tools.", []
+
+        # Asegurar columna MAXGROSS para pintado de errores
+        if 'Max_Gross' in resultado_final.columns:
+            resultado_final['MAXGROSS'] = pd.to_numeric(resultado_final['Max_Gross'], errors='coerce').fillna(999999)
+        else:
+            resultado_final['MAXGROSS'] = 999999
+
+        # Asegurar columnas vacías si no existen en el df
+        cols_requeridas = ['Sello_Linea', 'Sello_Inspector', 'Orden_Embarque']
+        for c in cols_requeridas:
+            if c not in resultado_final.columns:
+                resultado_final[c] = ""
 
         # =========================================================================
-        # --- GENERAR REMATE 
+        # --- 1. GENERAR REMATE NORMAL
         # =========================================================================
         remate = (
-            resultado_filtrado_zoopp.groupby(["CONTENEDOR", "Entrega", "PRODINFO"]).agg({
+            resultado_final.groupby(["CONTENEDOR", "Entrega", "PRODINFO"]).agg({
                 "RESERVA": "first",
                 "DESTINO": "first",
-                "SELLO,C,15": "first",
-                "CODIGO_BAR,C,50": "count",       
-                "PESO,N,17,4": "sum",             
-                "vollote,C,15": "sum",
-                "TARA_CNT,N,16,0": "first", 
+                "Sello_Linea": "first",
+                "Codigo_Barra": "count",       
+                "Peso_lote": "sum",             
+                "Volumen_Lote": "sum",
+                "Tara": "first", 
                 "MAXGROSS": "first"                         
             }).reset_index()
         )
         
-        remate["PESO_BRUTO_TOTAL"] = remate["PESO,N,17,4"] + remate["TARA_CNT,N,16,0"]
+        remate["PESO_BRUTO_TOTAL"] = remate["Peso_lote"] + remate["Tara"]
         contenedores_con_sobrepeso = set(
             remate[remate["PESO_BRUTO_TOTAL"] >= remate["MAXGROSS"]]["CONTENEDOR"].unique()
         )        
 
         remate = remate.rename(columns={
             "CONTENEDOR": "Contenedor",
-            "Entrega": "Entrega",
+            "PRODINFO": "Clase de Producto",
             "RESERVA": "Reserva",
             "DESTINO": "Pto Destino",
-            "PRODINFO": "Clase de Producto",
-            "SELLO,C,15": "Sello",
-            "CODIGO_BAR,C,50": "Cantidad de Lotes",
-            "PESO,N,17,4": "Peso Total (kg)",
-            "vollote,C,15": "Volumen Total (m3)"
+            "Sello_Linea": "Sello",
+            "Codigo_Barra": "Cantidad de Lotes",
+            "Peso_lote": "Peso Total (kg)",
+            "Volumen_Lote": "Volumen Total (m3)"
         })
 
         remate = remate[[
@@ -476,32 +349,24 @@ def procesar_madera(rutas):
         ]]
         remate = remate.sort_values(by=["Entrega", "Contenedor"])
         
-        # Crear archivo en memoria
+        # DIBUJO EXCEL REMATE
         output = BytesIO()
         remate.to_excel(output, index=False, startrow=6, engine='openpyxl')
         
         wb = load_workbook(output)
         ws = wb.active
         
-        fecha_hoy = datetime.datetime.now().strftime("%d/%m/%Y")
-        
-        ws['A1'] = "INFORME  DE CONTENEDORES CONSOLIDADOS PARA EMBARQUE"
+        ws['A1'] = "INFORME DE CONTENEDORES CONSOLIDADOS PARA EMBARQUE"
         ws['A3'] = "SAN VICENTE TERMINAL INTERNACIONAL"
-        ws['A4'] = f"FECHA: {fecha_hoy}"
+        ws['A4'] = f"FECHA: {datetime.datetime.now().strftime('%d/%m/%Y')}"
         ws['A5'] = f"NAVE: {nave_header}"
         
         bold_font = Font(bold=True)
-        ws['A1'].font = bold_font
-        ws['A3'].font = bold_font
-        ws['A5'].font = bold_font
-        ws['A1'].alignment = Alignment(horizontal="left")
-        ws['A3'].alignment = Alignment(horizontal="left")
-        ws['A4'].alignment = Alignment(horizontal="left")
-        ws['A5'].alignment = Alignment(horizontal="left")
+        for cell in ['A1', 'A3', 'A5']: ws[cell].font = bold_font
+        for cell in ['A1', 'A3', 'A4', 'A5']: ws[cell].alignment = Alignment(horizontal="left")
 
-        columnas_a_fusionar = [1, 2, 3]  
+        # Fusión de celdas y pintado rojo
         start_row = 8 
-        
         if ws.max_row >= start_row:
             current_value = ws.cell(row=start_row, column=1).value
             merge_start = start_row
@@ -510,12 +375,12 @@ def procesar_madera(rutas):
                 value = ws.cell(row=row, column=1).value
                 if value != current_value:
                     if merge_start != row - 1:
-                        for col in columnas_a_fusionar:
+                        for col in [1, 2, 3]:
                             ws.merge_cells(start_row=merge_start, start_column=col, end_row=row - 1, end_column=col)
                     current_value = value
                     merge_start = row
             if merge_start != ws.max_row:
-                for col in columnas_a_fusionar:
+                for col in [1, 2, 3]:
                     ws.merge_cells(start_row=merge_start, start_column=col, end_row=ws.max_row, end_column=col)
 
         rojo_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
@@ -523,79 +388,73 @@ def procesar_madera(rutas):
         
         for row in ws.iter_rows(min_row=7):
             celda_contenedor = row[4]
-            valor_contenedor = str(celda_contenedor.value).strip()
-            
-            if valor_contenedor in contenedores_con_sobrepeso:
+            if str(celda_contenedor.value).strip() in contenedores_con_sobrepeso:
                 celda_contenedor.fill = rojo_fill
-                
-            for cell in row:
-                cell.alignment = alignment_center
+            for cell in row: cell.alignment = alignment_center
         
         remate_output = BytesIO()
         wb.save(remate_output)
         remate_output.seek(0)
         
-        # --- GENERAR REMATE SAG ---
+        # =========================================================================
+        # --- 2. GENERAR REMATE SAG
+        # =========================================================================
         remate_sag = (
-            resultado_filtrado_zoopp.groupby(["CONTENEDOR", "Entrega"]).agg({
+            resultado_final.groupby(["CONTENEDOR", "Entrega"]).agg({
                 "RESERVA": "first",
                 "DESTINO": "first",
                 "PRODINFO": "first",
-                "SELLO,C,15": "first",
-                "SELLO_INSP,C,20": "first",
-                "CODIGO_BAR,C,50": "count",
-                "PESO,N,17,4": "sum",
-                "vollote,C,15": "sum"
+                "Sello_Linea": "first",
+                "Sello_Inspector": "first",
+                "Codigo_Barra": "count",
+                "Peso_lote": "sum",
+                "Volumen_Lote": "sum"
             }).reset_index()
         )
 
         remate_sag = remate_sag.rename(columns={
             "CONTENEDOR": "Contenedor",
-            "Entrega": "Entrega",
             "RESERVA": "Reserva",
             "DESTINO": "Pto Destino",
             "PRODINFO": "Clase de Producto",
-            "SELLO,C,15": "Sello",
-            "SELLO_INSP,C,20": "Sello Inspector",
-            "CODIGO_BAR,C,50": "Cantidad de Lotes",
-            "PESO,N,17,4": "Peso Total (kg)",
-            "vollote,C,15": "Volumen Total (m3)"
+            "Sello_Linea": "Sello",
+            "Sello_Inspector": "Sello Inspector",
+            "Codigo_Barra": "Cantidad de Lotes",
+            "Peso_lote": "Peso Total (kg)",
+            "Volumen_Lote": "Volumen Total (m3)"
         })
 
         remate_sag = remate_sag[
             ["Entrega", "Reserva", "Pto Destino", "Clase de Producto",
              "Contenedor", "Sello", "Sello Inspector",
              "Cantidad de Lotes", "Peso Total (kg)", "Volumen Total (m3)"]
-        ]
-
-        remate_sag = remate_sag.sort_values(by=["Entrega", "Contenedor"])
+        ].sort_values(by=["Entrega", "Contenedor"])
+        
         remate_sag_output = BytesIO()
         remate_sag.to_excel(remate_sag_output, index=False, engine='openpyxl')
         remate_sag_output.seek(0)
        
         # =========================================================================
-        # --- GENERAR PICKING ORIGINAL ---
+        # --- 3. GENERAR PICKING ORIGINAL
         # =========================================================================
-        resultado_filtrado_zoopp["PESO,N,17,4"] = pd.to_numeric(resultado_filtrado_zoopp["PESO,N,17,4"], errors='coerce')
-        resultado_filtrado_zoopp["TARA_CNT,N,16,0"] = pd.to_numeric(resultado_filtrado_zoopp["TARA_CNT,N,16,0"], errors='coerce')
-        resultado_filtrado_zoopp['FECHA_CONS,D'] = pd.to_datetime(resultado_filtrado_zoopp['FECHA_CONS,D'], dayfirst=True).dt.strftime('%d/%m/%Y')
-
         picking_cabecera = (
-            resultado_filtrado_zoopp.groupby(["CONTENEDOR", "Entrega"]).agg({
-                "SELLO,C,15": "first",
+            resultado_final.groupby(["CONTENEDOR", "Entrega"]).agg({
+                "Sello_Linea": "first",
                 "RESERVA": "first",
-                "DUS,C,255": "first",
-                "PESO,N,17,4": "sum",
-                "TARA_CNT,N,16,0": "first",
-                "FECHA_CONS,D": "first"
+                "Orden_Embarque": "first",
+                "Peso_lote": "sum",
+                "Tara": "first",
+                "Fecha_despacho": "first"
             }).reset_index()
         )
 
         picking_cabecera = picking_cabecera.rename(columns={
-            "SELLO,C,15": "Sello", "RESERVA": "Reserva", "DUS,C,255": "DUS",
-            "PESO,N,17,4": "Peso Bruto (kg)", "TARA_CNT,N,16,0": "Tara (kg)", "FECHA_CONS,D": "Fecha Contable","Entrega":"Entrega"
+            "Sello_Linea": "Sello", "RESERVA": "Reserva", "Orden_Embarque": "DUS",
+            "Peso_lote": "Peso Bruto (kg)", "Tara": "Tara (kg)", "Fecha_despacho": "Fecha Contable"
         })
+        
         picking_cabecera["Peso Total (kg)"] = picking_cabecera["Peso Bruto (kg)"] + picking_cabecera["Tara (kg)"]
+        picking_cabecera["ID Cabecera"] = range(1, len(picking_cabecera) + 1)
         
         vals_fijos = {
             "TPLST": "ZTPC", "Un Med Peso": "KG", "Un Med Tara": "KG", "Material Embalaje": "HC40",
@@ -603,10 +462,8 @@ def procesar_madera(rutas):
             "Nombre Despachador": "A", "Rut Despachador": "1", "Nombre Chofer": "A",
             "RUT Chofer": "1", "Patente": "A", "Transportista": "50025", "Guia": "1", "Almacen Destino": "7004"
         }
-        for k, v in vals_fijos.items():
-            picking_cabecera[k] = v
+        for k, v in vals_fijos.items(): picking_cabecera[k] = v
             
-        picking_cabecera["ID Cabecera"] = range(1, len(picking_cabecera) + 1)
         picking_cabecera = picking_cabecera.rename(columns={
             "CONTENEDOR": "ID Contenedor", "Tara (kg)": "Tara Contenedor", "Sello": "Sello Cont Nro",
             "Reserva": "Booking Nro", "Peso Bruto (kg)": "Peso Bruto Carga",
@@ -621,20 +478,17 @@ def procesar_madera(rutas):
         picking_cabecera = picking_cabecera[cols_pick]
 
         # Tabla POSICION (Original)
-        posicion = resultado_filtrado_zoopp.merge(
+        posicion = resultado_final.merge(
             picking_cabecera[['ID Cabecera', 'ID Contenedor', 'Entrega']],
-            left_on=['CONTENEDOR', 'Entrega'],
-            right_on=['ID Contenedor', 'Entrega'],
-            how='left'
+            left_on=['CONTENEDOR', 'Entrega'], right_on=['ID Contenedor', 'Entrega'], how='left'
         )
-        posicion['Cantidad'] = posicion.groupby(['ID Cabecera', 'CODIGO_BAR,C,50'])['CODIGO_BAR,C,50'].transform('count')
-        posicion['ID Posicion'] = posicion.groupby('ID Cabecera')['CODIGO_BAR,C,50'].rank(method='dense').astype(int)
+        posicion['Cantidad'] = posicion.groupby(['ID Cabecera', 'Codigo_Barra'])['Codigo_Barra'].transform('count')
+        posicion['ID Posicion'] = posicion.groupby('ID Cabecera')['Codigo_Barra'].rank(method='dense').astype(int)
         
-        posicion = posicion[['ID Cabecera', 'ID Posicion', 'CODIGO_BAR,C,50', 'Cantidad', 'PESO,N,17,4']]
-        posicion = posicion.rename(columns={'CODIGO_BAR,C,50': 'Lote', 'PESO,N,17,4': 'Peso'})
+        posicion = posicion[['ID Cabecera', 'ID Posicion', 'Codigo_Barra', 'Cantidad', 'Peso_lote']]
+        posicion = posicion.rename(columns={'Codigo_Barra': 'Lote', 'Peso_lote': 'Peso'})
         posicion['Unidad'] = "PQT"
-        posicion = posicion[['ID Cabecera', 'ID Posicion', 'Lote', 'Cantidad', 'Unidad', 'Peso']]
-        posicion = posicion.sort_values(by=["ID Cabecera", "ID Posicion"]).reset_index(drop=True)
+        posicion = posicion[['ID Cabecera', 'ID Posicion', 'Lote', 'Cantidad', 'Unidad', 'Peso']].sort_values(by=["ID Cabecera", "ID Posicion"])
 
         picking_output = BytesIO()
         with pd.ExcelWriter(picking_output, engine="openpyxl") as writer:
@@ -643,54 +497,36 @@ def procesar_madera(rutas):
         picking_output.seek(0)
 
         # =========================================================================
-        # --- GENERAR PICKING NUEVO ---
+        # --- 4. GENERAR PICKING NUEVO
         # =========================================================================
         picking_cabecera_nuevo = (
-            resultado_filtrado_zoopp.groupby(["CONTENEDOR", "Entrega"]).agg({
-                "SELLO,C,15": "first",
+            resultado_final.groupby(["CONTENEDOR", "Entrega"]).agg({
+                "Sello_Linea": "first",
                 "RESERVA": "first",
-                "DUS,C,255": "first",
-                "PESO,N,17,4": "sum",
-                "TARA_CNT,N,16,0": "first",
-                "FECHA_CONS,D": "first"
+                "Orden_Embarque": "first",
+                "Peso_lote": "sum",
+                "Tara": "first",
+                "Fecha_despacho": "first"
             }).reset_index()
         )
 
         picking_cabecera_nuevo = picking_cabecera_nuevo.rename(columns={
-            "CONTENEDOR": "ID Contenedor",
-            "SELLO,C,15": "Sello Cont Nro", 
-            "RESERVA": "Booking Nro", 
-            "DUS,C,255": "DUS Nro",
-            "PESO,N,17,4": "Peso Bruto Carga", 
-            "TARA_CNT,N,16,0": "Tara Contenedor", 
-            "FECHA_CONS,D": "Fecha Contable"
+            "CONTENEDOR": "ID Contenedor", "Sello_Linea": "Sello Cont Nro", 
+            "RESERVA": "Booking Nro", "Orden_Embarque": "DUS Nro",
+            "Peso_lote": "Peso Bruto Carga", "Tara": "Tara Contenedor", "Fecha_despacho": "Fecha Contable"
         })
         
         picking_cabecera_nuevo["Peso Total"] = picking_cabecera_nuevo["Peso Bruto Carga"] + picking_cabecera_nuevo["Tara Contenedor"]
         picking_cabecera_nuevo["ID Cabecera"] = range(1, len(picking_cabecera_nuevo) + 1)
         
         vals_fijos_nuevo = {
-            "Centro Origen": "TD06",
-            "Almacen Origen": "0100",
-            "Centro Destino": "TD06",
-            "Almacen Destino": "7004",
-            "Guia": "1",
-            "Transportista": "50025",
-            "Patente": "A",
-            "RUT Chofer": "1",
-            "Nombre Chofer": "A",
-            "Rut Despachador": "1",
-            "Nombre Despachador": "A",
-            "Tipo Flete": "01",
-            "Clave Flete": "0001",
-            "Clase Med Transporte": "Z100",
-            "Material Embalaje": "HC40",
-            "Un Medida Tara": "KG",
-            "Un Med Peso": "KG",
-            "TPLST": "ZTPC"
+            "Centro Origen": "TD06", "Almacen Origen": "0100", "Centro Destino": "TD06", "Almacen Destino": "7004",
+            "Guia": "1", "Transportista": "50025", "Patente": "A", "RUT Chofer": "1", "Nombre Chofer": "A",
+            "Rut Despachador": "1", "Nombre Despachador": "A", "Tipo Flete": "01", "Clave Flete": "0001",
+            "Clase Med Transporte": "Z100", "Material Embalaje": "HC40", "Un Medida Tara": "KG",
+            "Un Med Peso": "KG", "TPLST": "ZTPC"
         }
-        for k, v in vals_fijos_nuevo.items():
-            picking_cabecera_nuevo[k] = v
+        for k, v in vals_fijos_nuevo.items(): picking_cabecera_nuevo[k] = v
             
         cols_pick_nuevo = [
             "ID Cabecera", "Centro Origen", "Almacen Origen", "Centro Destino", 
@@ -704,24 +540,17 @@ def procesar_madera(rutas):
         picking_cabecera_nuevo = picking_cabecera_nuevo[cols_pick_nuevo]
 
         # Tabla POSICION (Nuevo)
-        posicion_nuevo = resultado_filtrado_zoopp.merge(
+        posicion_nuevo = resultado_final.merge(
             picking_cabecera_nuevo[['ID Cabecera', 'ID Contenedor', 'Entrega']],
-            left_on=['CONTENEDOR', 'Entrega'],
-            right_on=['ID Contenedor', 'Entrega'],
-            how='left'
+            left_on=['CONTENEDOR', 'Entrega'], right_on=['ID Contenedor', 'Entrega'], how='left'
         )
-        posicion_nuevo['Cantidad'] = posicion_nuevo.groupby(['ID Cabecera', 'CODIGO_BAR,C,50'])['CODIGO_BAR,C,50'].transform('count')
-        posicion_nuevo['ID Posicion'] = posicion_nuevo.groupby('ID Cabecera')['CODIGO_BAR,C,50'].rank(method='dense').astype(int)
+        posicion_nuevo['Cantidad'] = posicion_nuevo.groupby(['ID Cabecera', 'Codigo_Barra'])['Codigo_Barra'].transform('count')
+        posicion_nuevo['ID Posicion'] = posicion_nuevo.groupby('ID Cabecera')['Codigo_Barra'].rank(method='dense').astype(int)
         
-        posicion_nuevo = posicion_nuevo.rename(columns={
-            'CODIGO_BAR,C,50': 'Lote', 
-            'PESO,N,17,4': 'Peso', 
-            'ID Contenedor': 'BOX' 
-        })
+        posicion_nuevo = posicion_nuevo.rename(columns={'Codigo_Barra': 'Lote', 'Peso_lote': 'Peso', 'ID Contenedor': 'BOX' })
         posicion_nuevo['Unidad'] = "PQT"
         
-        posicion_nuevo = posicion_nuevo[['ID Cabecera', 'ID Posicion', 'Lote', 'Cantidad', 'Unidad', 'Peso', 'BOX']]
-        posicion_nuevo = posicion_nuevo.sort_values(by=["ID Cabecera", "ID Posicion"]).reset_index(drop=True)
+        posicion_nuevo = posicion_nuevo[['ID Cabecera', 'ID Posicion', 'Lote', 'Cantidad', 'Unidad', 'Peso', 'BOX']].sort_values(by=["ID Cabecera", "ID Posicion"])
 
         picking_nuevo_output = BytesIO()
         with pd.ExcelWriter(picking_nuevo_output, engine="openpyxl") as writer:
@@ -729,8 +558,8 @@ def procesar_madera(rutas):
             posicion_nuevo.to_excel(writer, sheet_name="Posicion", index=False)
         picking_nuevo_output.seek(0)
 
-        # RETORNAMOS LOS 4 ARCHIVOS EN EL ARREGLO FINAL
-        return True, "Proceso completado exitosamente", [
+        # RETORNAR LOS 4 ARCHIVOS
+        return True, "Proceso completado exitosamente con nuevo formato Tools.", [
             ("RemateMadera.xlsx", remate_output),
             ("RemateMaderaSAG.xlsx", remate_sag_output),
             ("Picking.xlsx", picking_output),
