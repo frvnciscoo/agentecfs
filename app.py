@@ -954,13 +954,13 @@ def procesar_sag(rutas):
             right_on="ID Contenedor",
             how="left"
         )
-        
+        "Sello_Inspector": "Sello Inspector",
         remate_final = remate_final.drop(columns=["ID Contenedor"], errors="ignore")
 
         # Ordenar las columnas para el reporte final
         cols_order = [
             "Entrega", "Reserva", "Pto Destino", "Clase de Producto", 
-            "Contenedor", "Sello", "Sello_Inspector", "SIF", 
+            "Contenedor", "Sello", "Sello Inspector", "SIF", 
             "Cantidad de Lotes", "Peso Lote", "Peso Total (kg)", "Volumen Total (m3)"
         ]
         
