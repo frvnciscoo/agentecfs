@@ -448,7 +448,7 @@ def procesar_madera(rutas):
         # =========================================================================
         # --- GENERAR PICKING ORIGINAL ---
         # =========================================================================
-        resultado_final['Fecha_despacho'] = pd.to_datetime(resultado_final['Fecha_despacho'], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
+        resultado_final['Fecha_Despacho'] = pd.to_datetime(resultado_final['Fecha_Despacho'], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
 
         picking_cabecera = (
             resultado_final.groupby(["CONTENEDOR", "Entrega"]).agg({
@@ -457,13 +457,13 @@ def procesar_madera(rutas):
                 "Orden_Embarque": "first",
                 "Peso_lote": "sum",
                 "Tara": "first",
-                "Fecha_despacho": "first"
+                "Fecha_Despacho": "first"
             }).reset_index()
         )
 
         picking_cabecera = picking_cabecera.rename(columns={
             "Sello_linea": "Sello", "RESERVA": "Reserva", "Orden_Embarque": "DUS",
-            "Peso_lote": "Peso Bruto (kg)", "Tara": "Tara (kg)", "Fecha_despacho": "Fecha Contable"
+            "Peso_lote": "Peso Bruto (kg)", "Tara": "Tara (kg)", "Fecha_Despacho": "Fecha Contable"
         })
         picking_cabecera["Peso Total (kg)"] = picking_cabecera["Peso Bruto (kg)"] + picking_cabecera["Tara (kg)"]
         
@@ -522,7 +522,7 @@ def procesar_madera(rutas):
                 "Orden_Embarque": "first",
                 "Peso_lote": "sum",
                 "Tara": "first",
-                "Fecha_despacho": "first"
+                "Fecha_Despacho": "first"
             }).reset_index()
         )
 
@@ -533,7 +533,7 @@ def procesar_madera(rutas):
             "Orden_Embarque": "DUS Nro",
             "Peso_lote": "Peso Bruto Carga", 
             "Tara": "Tara Contenedor", 
-            "Fecha_despacho": "Fecha Contable"
+            "Fecha_Despacho": "Fecha Contable"
         })
         
         picking_cabecera_nuevo["Peso Total"] = picking_cabecera_nuevo["Peso Bruto Carga"] + picking_cabecera_nuevo["Tara Contenedor"]
