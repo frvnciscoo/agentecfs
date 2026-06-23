@@ -1806,13 +1806,10 @@ def procesar_cuadratura_celulosa(rutas):
 # ==========================================
 CONFIG_ARCHIVOS = {
     "Madera": [
-        {"id": "programa", "nombre": "Programa", "opcional": False,"descripcion": "Último programa de consolidación enviado por Arauco"},
-        {"id": "saldos",   "nombre": "Saldos",   "opcional": True,"descripcion": "Prog Consolidación -> Saldos Autorizados por Programa"},
-        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True,"descripcion": "Remates enviados anteriormente"},
-        {"id": "despacho", "nombre": "Despacho", "opcional": False,"descripcion": "Consultas -> Planillas de Recepciones/Despachos (Despachos a Contenedor) "},
-        {"id": "detalle",  "nombre": "Detalle",  "opcional": False,"descripcion": "Prog Consolidación -> Consulta Detalle Programa de Consolidación"},
-        {"id": "informe",  "nombre": "Informe",  "opcional": False,"descripcion": "Informe -> Informe Consolidado "},
-        {"id": "zoopp",    "nombre": "Zoopp",    "opcional": False,"descripcion": "Archivo sacado de SAP, consulta ZOOPP"},
+        {"id": "programa", "nombre": "Programa", "opcional": False, "descripcion": "Último programa enviado por Arauco"},
+        {"id": "saldos",   "nombre": "Saldos",   "opcional": True,  "descripcion": "Saldos Autorizados por Programa"},
+        {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True, "descripcion": "Remates anteriores"},
+        {"id": "tools",    "nombre": "Tools",    "opcional": False, "multiple": True, "descripcion": "Archivo Tools con detalle de Cnt, Sellos, Pesos, etc."}
     ],
     "Celulosa": [
         {"id": "programa", "nombre": "Programa", "opcional": False, "descripcion": "Programa que contiene entregas BKP/EKP/UKP y/o DP"},
