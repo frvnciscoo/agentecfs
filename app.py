@@ -319,7 +319,7 @@ def procesar_madera(rutas):
             resultado_final.groupby(["CONTENEDOR", "Entrega", "PRODINFO"]).agg({
                 "RESERVA": "first",
                 "DESTINO": "first",
-                "Sello_Linea": "first",
+                "Sello_linea": "first",
                 "Codigo_Barra": "count",       
                 "Peso_lote": "sum",             
                 "Volumen_Lote": "sum",
@@ -338,7 +338,7 @@ def procesar_madera(rutas):
             "RESERVA": "Reserva",
             "DESTINO": "Pto Destino",
             "PRODINFO": "Clase de Producto",
-            "Sello_Linea": "Sello",
+            "Sello_linea": "Sello",
             "Codigo_Barra": "Cantidad de Lotes",
             "Peso_lote": "Peso Total (kg)",
             "Volumen_Lote": "Volumen Total (m3)"
@@ -415,7 +415,7 @@ def procesar_madera(rutas):
                 "RESERVA": "first",
                 "DESTINO": "first",
                 "PRODINFO": "first",
-                "Sello_Linea": "first",
+                "Sello_linea": "first",
                 "Sello_Inspector": "first",
                 "Codigo_Barra": "count",
                 "Peso_lote": "sum",
@@ -428,7 +428,7 @@ def procesar_madera(rutas):
             "RESERVA": "Reserva",
             "DESTINO": "Pto Destino",
             "PRODINFO": "Clase de Producto",
-            "Sello_Linea": "Sello",
+            "Sello_linea": "Sello",
             "Codigo_Barra": "Cantidad de Lotes",
             "Peso_lote": "Peso Total (kg)",
             "Volumen_Lote": "Volumen Total (m3)"
@@ -452,7 +452,7 @@ def procesar_madera(rutas):
 
         picking_cabecera = (
             resultado_final.groupby(["CONTENEDOR", "Entrega"]).agg({
-                "Sello_Linea": "first",
+                "Sello_linea": "first",
                 "RESERVA": "first",
                 "Orden_Embarque": "first",
                 "Peso_lote": "sum",
@@ -462,7 +462,7 @@ def procesar_madera(rutas):
         )
 
         picking_cabecera = picking_cabecera.rename(columns={
-            "Sello_Linea": "Sello", "RESERVA": "Reserva", "Orden_Embarque": "DUS",
+            "Sello_linea": "Sello", "RESERVA": "Reserva", "Orden_Embarque": "DUS",
             "Peso_lote": "Peso Bruto (kg)", "Tara": "Tara (kg)", "Fecha_despacho": "Fecha Contable"
         })
         picking_cabecera["Peso Total (kg)"] = picking_cabecera["Peso Bruto (kg)"] + picking_cabecera["Tara (kg)"]
@@ -517,7 +517,7 @@ def procesar_madera(rutas):
         # =========================================================================
         picking_cabecera_nuevo = (
             resultado_final.groupby(["CONTENEDOR", "Entrega"]).agg({
-                "Sello_Linea": "first",
+                "Sello_linea": "first",
                 "RESERVA": "first",
                 "Orden_Embarque": "first",
                 "Peso_lote": "sum",
@@ -528,7 +528,7 @@ def procesar_madera(rutas):
 
         picking_cabecera_nuevo = picking_cabecera_nuevo.rename(columns={
             "CONTENEDOR": "ID Contenedor",
-            "Sello_Linea": "Sello Cont Nro", 
+            "Sello_linea": "Sello Cont Nro", 
             "RESERVA": "Booking Nro", 
             "Orden_Embarque": "DUS Nro",
             "Peso_lote": "Peso Bruto Carga", 
