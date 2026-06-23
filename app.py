@@ -429,6 +429,7 @@ def procesar_madera(rutas):
             "DESTINO": "Pto Destino",
             "PRODINFO": "Clase de Producto",
             "Sello_linea": "Sello",
+            "Sello_Inspector": "Sello Inspector", # <--- 1. AGREGAR ESTA LÍNEA
             "Codigo_Barra": "Cantidad de Lotes",
             "Peso_lote": "Peso Total (kg)",
             "Volumen_Lote": "Volumen Total (m3)"
@@ -436,7 +437,7 @@ def procesar_madera(rutas):
 
         remate_sag = remate_sag[
             ["Entrega", "Reserva", "Pto Destino", "Clase de Producto",
-             "Contenedor", "Sello", "Sello_Inspector",
+             "Contenedor", "Sello", "Sello Inspector", # <--- 2. QUITAR EL GUION BAJO AQUÍ
              "Cantidad de Lotes", "Peso Total (kg)", "Volumen Total (m3)"]
         ]
 
@@ -954,7 +955,7 @@ def procesar_sag(rutas):
             right_on="ID Contenedor",
             how="left"
         )
-        "Sello_Inspector": "Sello Inspector",
+        
         remate_final = remate_final.drop(columns=["ID Contenedor"], errors="ignore")
 
         # Ordenar las columnas para el reporte final
