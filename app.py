@@ -436,7 +436,7 @@ def procesar_madera(rutas):
 
         remate_sag = remate_sag[
             ["Entrega", "Reserva", "Pto Destino", "Clase de Producto",
-             "Contenedor", "Sello", "Sello Inspector",
+             "Contenedor", "Sello", "Sello_Inspector",
              "Cantidad de Lotes", "Peso Total (kg)", "Volumen Total (m3)"]
         ]
 
@@ -937,7 +937,7 @@ def procesar_sag(rutas):
             "Pto Destino": "first",
             "Clase de Producto": "first",
             "Sello": "first",
-            "Sello Inspector": "first",
+            "Sello_Inspector": "first",
             "Peso Total (kg)": "sum",
             "Volumen Total (m3)": "sum"
         }
@@ -960,7 +960,7 @@ def procesar_sag(rutas):
         # Ordenar las columnas para el reporte final
         cols_order = [
             "Entrega", "Reserva", "Pto Destino", "Clase de Producto", 
-            "Contenedor", "Sello", "Sello Inspector", "SIF", 
+            "Contenedor", "Sello", "Sello_Inspector", "SIF", 
             "Cantidad de Lotes", "Peso Lote", "Peso Total (kg)", "Volumen Total (m3)"
         ]
         
