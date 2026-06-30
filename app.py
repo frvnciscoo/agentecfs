@@ -1156,6 +1156,10 @@ def procesar_cmpc_madera(rutas):
 
         mensajes_exito = []
         archivos_output = []
+        
+        # Limpieza robusta de la columna producto
+        if "producto" in remate.columns:
+            remate["producto"] = remate["producto"].astype(str).str.strip().str.upper()
 
         # SUB-PROCESO 1: MADERA SECA
         remate_seca = remate[remate["producto"] == "MADERA SECA"].copy()
