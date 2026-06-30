@@ -1512,7 +1512,7 @@ def procesar_cmpc_madera(rutas):
         import traceback
         traceback.print_exc()
         return False, str(e), []
-        # =========================================================
+# =========================================================
         # --- NUEVO: GENERAR CONSOLIDADO SAG UNIFICADO ---
         # =========================================================
         if dfs_para_sag:
@@ -1536,10 +1536,17 @@ def procesar_cmpc_madera(rutas):
             output_sag_cons.seek(0)
             archivos_output.append(("CMPC_Madera_Consolidado_SAG.xlsx", output_sag_cons))
 
+        # --- RETORNOS DENTRO DEL TRY ---
         if not archivos_output:
             return True, "Proceso finalizado, pero no se generaron archivos.", []
 
         return True, "Archivos generados exitosamente", archivos_output
+
+    except Exception as e: # <--- EL EXCEPT DEBE IR AL FINAL DE TODO
+        st.error(f"Error en procesamiento: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e), []
         
 # ==========================================
 #      LÓGICA CMPC PAPEL (FINAL - NOTA POR CONTENEDOR)
