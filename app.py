@@ -989,6 +989,186 @@ def procesar_sag(rutas):
         traceback.print_exc()
         return False, str(e), []
 # ==========================================
+#      LÓGICA CMPC SAG
+# ==========================================
+def procesar_cmpc_sag(rutas):
+    st.info("Iniciando procesamiento CMPC SAG...")
+    try:
+        # 1. Cargar Remate
+        remate = pd.read_excel(rutas['remate'])
+        
+        remate['sigla_cnt'] = remate['sigla_cnt'].astype(str).str.strip()
+        remate['nro_cnt'] = remate['nro_cnt'].astype(str).str.strip()
+        remate['dv_cnt'] = remate['dv_cnt'].astype(str).str.strip()
+
+        def construir_contenedor_rem(row):
+            sigla = str(row['sigla_cnt']).strip()
+            val_num = str(row['nro_cnt'])
+            if '.' in val_num:
+                numero = val_num.split('.')[0].strip()
+            else:
+                numero = val_num.strip()
+            dv = str(row['dv_cnt']).strip()
+            return f"{sigla}-{numero.zfill(6)}-{dv}"
+
+        remate['Contenedor'] = remate.apply(construir_contenedor_rem, axis=1)
+
+        # 2. Cargar Tools / Consolidado
+        tools = pd.read_excel(rutas['tools'])
+        
+        # Buscar dinámicamente cómo se llama la columna del paquete y el peso
+        col_paquete = 'Npaquete' if 'Npaquete' in tools.columns else 'Nro_Paquete'
+        col_peso = next((c for c in tools.columns if 'peso' in c.lower()), None)
+        
+        # Si la herramienta tiene Cnt_Sigla (Es Tools), armamos el contenedor. Si no, asumimos que ya viene listo.
+        if 'Cnt_Sigla' in tools.columns:
+            tools['Cnt_Sigla'] = tools['Cnt_Sigla'].astype(str).str.strip()
+            tools['Cnt_Nro'] = tools['Cnt_Nro'].astype(str).str.strip()
+            tools['Cnt_DV'] = tools['Cnt_DV'].astype(str).str.strip()
+            
+            def construir_contenedor_tools(row):
+                sigla = str(row['Cnt_Sigla']).strip()
+                val_num = str(row['Cnt_Nro'])
+                if '.' in val_num: numero = val_num.split('.')[0].strip()
+                else: numero = val_num.strip()
+                dv = str(row['Cnt_DV']).strip()
+                return f"{sigla}-{numero.zfill(6)}-{dv}"
+                
+            tools['Contenedor'] = tools.apply(construir_contenedor_tools, axis=1)
+
+        tools[col_paquete] = tools[col_paquete].astype(str).str.strip()
+        
+        # Estandarizar peso
+        if col_peso:
+            tools['Peso_Lote_Num'] = pd.to_numeric(tools[col_peso].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        else:
+            tools['Peso_Lote_Num'] = 0
+
+        # 3. Cargar Archivos SIF (SAG)
+        rutas_sif = rutas['sag']
+        if isinstance(rutas_sif, str):
+            rutas_sif = [rutas_sif]
+            
+        lista_sifs = []
+        for ruta in rutas_sif:
+            try:
+                df_temp = pd.read_excel(ruta, sheet_name="detalle")
+                lista_sifs.append(df_temp)
+            except Exception as e:
+                st.warning(f"Error cargando pestaña 'detalle' en SIF {os.path.basename(ruta)}: {e}")
+        
+        if not lista_sifs:
+            return False, "No se pudo cargar ningún archivo SIF válido.", []
+            
+        SAG = pd.concat(lista_sifs, ignore_index=True)
+        
+        # Normalizar columnas SAG
+        if "Codigo_Barra" not in SAG.columns or "SIF" not in SAG.columns:
+            return False, "Los archivos SIF no tienen las columnas 'Codigo_Barra' o 'SIF'.", []
+            
+        SAG["Codigo_Barra"] = SAG["Codigo_Barra"].astype(str).str.strip()
+        SAG['SIF_num'] = pd.to_numeric(SAG['SIF'], errors='coerce')
+        SAG = SAG.sort_values(by=['Codigo_Barra', 'SIF_num'], ascending=[True, False])
+        SAG = SAG.drop_duplicates(subset=['Codigo_Barra'], keep='first')
+        SAG['SIF'] = SAG['SIF'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+
+        # 4. Cruzar Tools con SAG
+        tools_sif = tools.merge(
+            SAG[["Codigo_Barra", "SIF"]],
+            how="left",
+            left_on=col_paquete,
+            right_on="Codigo_Barra"
+        )
+        tools_sif["SIF"] = tools_sif["SIF"].fillna("Sin SIF").astype(str).str.strip()
+
+        # =========================================================
+        # PROCESO A: Agrupar Tools separando cantidades por SIF
+        # =========================================================
+        resumen_sif = tools_sif.groupby(["Contenedor", "SIF"], dropna=False).agg({
+            col_paquete: "count",
+            "Peso_Lote_Num": "sum"
+        }).reset_index()
+        
+        resumen_sif["SIF"] = resumen_sif["SIF"].astype(str)
+        resumen_sif[col_paquete] = resumen_sif[col_paquete].fillna(0).astype(int).astype(str)
+        resumen_sif["Peso_Lote_Num"] = resumen_sif["Peso_Lote_Num"].fillna(0).round(2).astype(str)
+        
+        sif_agrupado = resumen_sif.groupby("Contenedor").agg({
+            "SIF": lambda x: " / ".join(x),
+            col_paquete: lambda x: " / ".join(x),
+            "Peso_Lote_Num": lambda x: " / ".join(x)
+        }).reset_index()
+        
+        sif_agrupado = sif_agrupado.rename(columns={
+            col_paquete: "Cantidad de Lotes",
+            "Peso_Lote_Num": "Peso Lote"
+        })
+
+        # =========================================================
+        # PROCESO B: Agrupar Remate
+        # =========================================================
+        # Mapeo de columnas de CMPC a los nombres requeridos
+        remate = remate.rename(columns={
+            "pedido": "Entrega",
+            "reserva": "Reserva",
+            "pto_final": "Pto Destino",
+            "producto": "Clase de Producto",
+            "sello_linea": "Sello",
+            "neto": "Peso Total (kg)",
+            "volumen": "Volumen Total (m3)"
+        })
+        
+        remate["Sello Inspector"] = "" # CMPC no suele traer Sello Inspector en el remate
+        
+        agg_remate = {
+            "Entrega": lambda x: " / ".join(x.dropna().astype(str).unique()),
+            "Reserva": "first",
+            "Pto Destino": "first",
+            "Clase de Producto": "first",
+            "Sello": "first",
+            "Sello Inspector": "first",
+            "Peso Total (kg)": "sum",
+            "Volumen Total (m3)": "sum"
+        }
+        
+        valid_agg = {k: v for k, v in agg_remate.items() if k in remate.columns}
+        remate_agrupado = remate.groupby("Contenedor", as_index=False).agg(valid_agg)
+
+        # =========================================================
+        # PROCESO C: Unir Remate agrupado con SIF agrupado
+        # =========================================================
+        remate_final = remate_agrupado.merge(
+            sif_agrupado,
+            on="Contenedor",
+            how="left"
+        )
+        
+        cols_order = [
+            "Entrega", "Reserva", "Pto Destino", "Clase de Producto", 
+            "Contenedor", "Sello", "Sello Inspector", "SIF", 
+            "Cantidad de Lotes", "Peso Lote", "Peso Total (kg)", "Volumen Total (m3)"
+        ]
+        
+        cols_final = [c for c in cols_order if c in remate_final.columns]
+        remate_final = remate_final[cols_final]
+
+        # Creación del Excel en memoria
+        output = BytesIO()
+        remate_final.to_excel(output, index=False, engine='openpyxl')
+        
+        wb = load_workbook(output)
+        final_output = BytesIO()
+        wb.save(final_output)
+        final_output.seek(0)
+
+        return True, "Archivo CMPC SAG generado correctamente", [("RemateSIF_CMPC.xlsx", final_output)]
+
+    except Exception as e:
+        st.error(f"Error en procesamiento CMPC SAG: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e), []
+# ==========================================
 #      LÓGICA CMPC CELULOSA
 # ==========================================
 def procesar_cmpc_celulosa(rutas):
@@ -1156,6 +1336,7 @@ def procesar_cmpc_madera(rutas):
 
         mensajes_exito = []
         archivos_output = []
+        dfs_para_sag = []
         
         # Limpieza robusta de la columna producto
         if "producto" in remate.columns:
@@ -1233,6 +1414,14 @@ def procesar_cmpc_madera(rutas):
                 output_seca_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Seca_Consolidado.xlsx", output_seca_cons))
 
+                # --- NUEVO: GUARDAR DATOS SECA PARA EL SAG ---
+                df_reset = df.reset_index()
+                if 'CONTENEDORINF' in df_reset.columns:
+                    df_reset = df_reset.rename(columns={'CONTENEDORINF': 'Contenedor'})
+                elif 'index' in df_reset.columns:
+                    df_reset = df_reset.rename(columns={'index': 'Contenedor'})
+                dfs_para_sag.append(df_reset)
+
         # SUB-PROCESO 2: MADERA VERDE
         remate_verde = remate[remate["producto"].astype(str).str.upper().str.contains("VERDE", na=False)].copy()
         
@@ -1305,6 +1494,14 @@ def procesar_cmpc_madera(rutas):
                 output_verde_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Verde_Consolidado.xlsx", output_verde_cons))
 
+                # --- NUEVO: GUARDAR DATOS VERDE PARA EL SAG ---
+                df_v_reset = df_v.reset_index()
+                if 'CONTENEDORINF' in df_v_reset.columns:
+                    df_v_reset = df_v_reset.rename(columns={'CONTENEDORINF': 'Contenedor'})
+                elif 'index' in df_v_reset.columns:
+                    df_v_reset = df_v_reset.rename(columns={'index': 'Contenedor'})
+                dfs_para_sag.append(df_v_reset)
+
         if not archivos_output:
             return True, "Proceso finalizado, pero no se generaron archivos.", []
 
@@ -1315,7 +1512,35 @@ def procesar_cmpc_madera(rutas):
         import traceback
         traceback.print_exc()
         return False, str(e), []
+        # =========================================================
+        # --- NUEVO: GENERAR CONSOLIDADO SAG UNIFICADO ---
+        # =========================================================
+        if dfs_para_sag:
+            df_sag_full = pd.concat(dfs_para_sag, ignore_index=True)
+            
+            # Buscar la columna de peso real en el Tools original
+            col_peso_tools = next((c for c in df_sag_full.columns if 'peso' in c.lower()), None)
+            
+            df_cons_sag = pd.DataFrame()
+            df_cons_sag['Contenedor'] = df_sag_full['Contenedor']
+            df_cons_sag['Npaquete'] = df_sag_full['Nro_Paquete']
+            
+            # Extraer y limpiar el peso
+            if col_peso_tools:
+                df_cons_sag['Peso'] = pd.to_numeric(df_sag_full[col_peso_tools].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+            else:
+                df_cons_sag['Peso'] = 0
+                
+            output_sag_cons = BytesIO()
+            df_cons_sag.to_excel(output_sag_cons, index=False, engine='openpyxl')
+            output_sag_cons.seek(0)
+            archivos_output.append(("CMPC_Madera_Consolidado_SAG.xlsx", output_sag_cons))
 
+        if not archivos_output:
+            return True, "Proceso finalizado, pero no se generaron archivos.", []
+
+        return True, "Archivos generados exitosamente", archivos_output
+        
 # ==========================================
 #      LÓGICA CMPC PAPEL (FINAL - NOTA POR CONTENEDOR)
 # ==========================================
@@ -1889,6 +2114,11 @@ CONFIG_ARCHIVOS = {
         {"id": "remate", "nombre": "Remate", "opcional": False},
         {"id": "tools",  "nombre": "Tools",  "opcional": False},
     ],  
+    "CMPC SAG": [
+        {"id": "remate", "nombre": "Remate", "opcional": False},
+        {"id": "tools", "nombre": "Consolidado SAG", "opcional": False, "descripcion": "Sube el archivo 'CMPC_Madera_Consolidado_SAG.xlsx' recién generado"},
+        {"id": "sag",   "nombre": "SIF",   "opcional": False, "multiple": True, "descripcion": "Archivos Excel del SAG"}
+    ],    
     "Cuadrar Celulosa": [
         {"id": "bodegas", "nombre": "Planos de Bodega", "opcional": False, "multiple": True, "descripcion": "Archivos Excel con el plano físico de las bodegas."},
         {"id": "sistema", "nombre": "Stock Sistema", "opcional": False, "multiple": True, "descripcion": "Consultas -> Consulta Stock sin Código de Barra"}
@@ -2087,6 +2317,9 @@ def mostrar_menu_materiales_cmpc():
         if st.button("**Plywood**", use_container_width=True):
             st.session_state.tipo_material = "CMPC Plywood"
             st.rerun()
+        if st.button("**SAG**", use_container_width=True): # <--- BOTÓN NUEVO
+            st.session_state.tipo_material = "CMPC SAG"
+            st.rerun()            
 
 def mostrar_panel_proceso():
     st.header(f"Panel: {st.session_state.tipo_material}")
@@ -2208,6 +2441,8 @@ def ejecutar_proceso():
             exito, mensaje, archivos = procesar_cmpc_papel(rutas)
         elif tipo_material == "CMPC Plywood":
             exito, mensaje, archivos = procesar_cmpc_plywood(rutas)
+        elif tipo_material == "CMPC SAG": # <--- NUEVA LÍNEA
+            exito, mensaje, archivos = procesar_cmpc_sag(rutas) # <--- NUEVA LÍNEA            
         elif tipo_material == "Cuadrar Celulosa": # <--- AGREGAR ESTAS DOS LÍNEAS
             exito, mensaje, archivos = procesar_cuadratura_celulosa(rutas)    
         else:
