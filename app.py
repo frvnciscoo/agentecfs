@@ -1202,7 +1202,9 @@ def procesar_cmpc_madera(rutas):
             df = tools_matched.join(remate_matched, how="left", rsuffix="_rem")
             
             if not df.empty:
-                df[['contrato', 'item']] = df['Orden_Pedido'].astype(str).str.split('-', n=1, expand=True)
+                split_pedido = df['Orden_Pedido'].astype(str).str.split('-', n=1)
+                df['contrato'] = split_pedido.str[0]
+                df['item'] = split_pedido.str[1]
                 df['fecha_dus'] = pd.to_datetime(df['fecha_aceptacion'], errors='coerce').dt.strftime('%d/%m/%Y')
 
                 df_consolidado = pd.DataFrame({
