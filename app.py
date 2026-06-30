@@ -1908,42 +1908,59 @@ def procesar_cmpc_sag(rutas):
         cons_sag[col_paquete] = cons_sag[col_paquete].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
         cons_sag["Contenedor"] = cons_sag["Contenedor"].astype(str).str.strip()
         
-        # 2. Cargar Archivos SIF (SAG)
+         # 2. Cargar Archivos SIF (SAG) y extraer SIF del nombre
         rutas_sif = rutas['sag']
         if isinstance(rutas_sif, str): rutas_sif = [rutas_sif]
             
         lista_sifs = []
-        st.info(f"Cargando {len(rutas_sif)} archivos SIF...")
+        st.info(f"Cargando {len(rutas_sif)} archivos SIF y extrayendo número...")
         for ruta in rutas_sif:
             try:
                 # Intentar leer hoja detalle, si no existe lee la por defecto
-                df_temp = pd.read_excel(ruta, sheet_name="detalle")
-                lista_sifs.append(df_temp)
-            except Exception:
                 try:
+                    df_temp = pd.read_excel(ruta, sheet_name="detalle")
+                except Exception:
                     df_temp = pd.read_excel(ruta)
-                    lista_sifs.append(df_temp)
-                except Exception as e:
-                    st.error(f"Error cargando {ruta}: {e}")
+                
+                # --- NUEVA LÓGICA: Extraer SIF del nombre del archivo ---
+                # Como guardaste el temporal con suffix=_{uploaded_file.name}, 
+                # el nombre original viene incluido en la ruta.
+                nombre_archivo = os.path.basename(ruta)
+                
+                # Buscar el patrón "SVTI_" seguido de números
+                match = re.search(r'SVTI_(\d+)', nombre_archivo, re.IGNORECASE)
+                if match:
+                    sif_extraido = match.group(1) # Extrae solo el número (ej: 270)
+                else:
+                    sif_extraido = "S/N" # Por si algún archivo no cumple el formato
+                
+                # Crear la columna SIF manualmente para este archivo
+                df_temp['SIF_EXTRAIDO'] = sif_extraido
+                
+                lista_sifs.append(df_temp)
+            except Exception as e:
+                st.error(f"Error cargando {ruta}: {e}")
         
         if not lista_sifs:
             return False, "No se pudo cargar ningún archivo SIF válido.", []
             
         SAG = pd.concat(lista_sifs, ignore_index=True)
         
-        # 3. Normalizar columnas SAG (Buscando PAQUETE y SIF)
+        # 3. Normalizar columnas SAG (Buscando PAQUETE y usando el SIF_EXTRAIDO)
         col_sif_paq = next((c for c in SAG.columns if c.upper().strip() == 'PAQUETE'), None)
-        col_sif_num = next((c for c in SAG.columns if c.upper().strip() == 'SIF'), None)
+        col_sif_num = 'SIF_EXTRAIDO' # Usamos la columna que acabamos de crear
         
-        if not col_sif_paq or not col_sif_num:
-            return False, f"Los archivos SIF no tienen las columnas 'PAQUETE' o 'SIF'. (Encontradas: {list(SAG.columns)})", []
+        if not col_sif_paq:
+            return False, f"Los archivos SIF no tienen la columna 'PAQUETE'. (Encontradas: {list(SAG.columns)})", []
             
         SAG[col_sif_paq] = SAG[col_sif_paq].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+        
+        # Ordenar por si un paquete se repite, nos quedamos con el SIF más alto
         SAG['SIF_num_sort'] = pd.to_numeric(SAG[col_sif_num], errors='coerce')
         SAG = SAG.sort_values(by=[col_sif_paq, 'SIF_num_sort'], ascending=[True, False])
         SAG = SAG.drop_duplicates(subset=[col_sif_paq], keep='first')
-        SAG[col_sif_num] = SAG[col_sif_num].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
         
+        SAG[col_sif_num] = SAG[col_sif_num].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)       
         # 4. Cruzar Consolidado SAG con SIF
         cons_sag = cons_sag.merge(
             SAG[[col_sif_paq, col_sif_num]],
