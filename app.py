@@ -1870,8 +1870,8 @@ CONFIG_ARCHIVOS = {
         {"id": "tools",  "nombre": "Tools",  "opcional": False},
     ],
     "CMPC Madera": [
-        {"id": "remate", "nombre": "Remate", "opcional": False},
-        {"id": "informe", "nombre": "Tools", "opcional": False},
+        {"id": "remate", "nombre": "Remate", "opcional": False, "descripcion": "Prog. Consolidación -> Consolidaciones con Transmiciones Electrónicas"},
+        {"id": "informe", "nombre": "Tools", "opcional": False, "descripcion": "Tools -> Despacho a Contenedor con Código de Barra"},
     ],
     "CMPC Papel": [
         {"id": "remate", "nombre": "Remate", "opcional": False},
