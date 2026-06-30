@@ -997,22 +997,29 @@ def procesar_cmpc_sag(rutas):
         # 1. Cargar Remate
         remate = pd.read_excel(rutas['remate'])
         
-        remate['sigla_cnt'] = remate['sigla_cnt'].astype(str).str.strip()
-        remate['nro_cnt'] = remate['nro_cnt'].astype(str).str.strip()
-        remate['dv_cnt'] = remate['dv_cnt'].astype(str).str.strip()
+        # --- LÓGICA DE DETECCIÓN DE CONTENEDOR ---
+        # Si el remate ya tiene la columna 'Contenedor', la usamos. 
+        # Si no, intentamos armarla desde las columnas sigla/nro/dv
+        if 'Contenedor' in remate.columns:
+            remate['Contenedor'] = remate['Contenedor'].astype(str).str.strip()
+        elif all(col in remate.columns for col in ['sigla_cnt', 'nro_cnt', 'dv_cnt']):
+            remate['sigla_cnt'] = remate['sigla_cnt'].astype(str).str.strip()
+            remate['nro_cnt'] = remate['nro_cnt'].astype(str).str.strip()
+            remate['dv_cnt'] = remate['dv_cnt'].astype(str).str.strip()
 
-        def construir_contenedor_rem(row):
-            sigla = str(row['sigla_cnt']).strip()
-            val_num = str(row['nro_cnt'])
-            if '.' in val_num:
-                numero = val_num.split('.')[0].strip()
-            else:
-                numero = val_num.strip()
-            dv = str(row['dv_cnt']).strip()
-            return f"{sigla}-{numero.zfill(6)}-{dv}"
+            def construir_contenedor_rem(row):
+                sigla = str(row['sigla_cnt']).strip()
+                val_num = str(row['nro_cnt'])
+                if '.' in val_num: numero = val_num.split('.')[0].strip()
+                else: numero = val_num.strip()
+                dv = str(row['dv_cnt']).strip()
+                return f"{sigla}-{numero.zfill(6)}-{dv}"
 
-        remate['Contenedor'] = remate.apply(construir_contenedor_rem, axis=1)
-
+            remate['Contenedor'] = remate.apply(construir_contenedor_rem, axis=1)
+        else:
+            return False, "El archivo Remate no tiene la columna 'Contenedor' ni las columnas de desglose (sigla_cnt, etc).", []
+        
+        # ... resto de la función sigue igual ...
         # 2. Cargar Tools / Consolidado
         tools = pd.read_excel(rutas['tools'])
         
@@ -1377,6 +1384,7 @@ def procesar_cmpc_madera(rutas):
 
             # CONSOLIDADO SECA
             tools_filtrado = tools[tools['CONTENEDORINF'].isin(remate_seca['CONTENEDORREM'])]
+            dfs_para_sag.append(tools_filtrado.copy())
             remate_matched = remate_seca.set_index("CONTENEDORREM")
             tools_matched = tools_filtrado.set_index("CONTENEDORINF")
             
@@ -1414,13 +1422,6 @@ def procesar_cmpc_madera(rutas):
                 output_seca_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Seca_Consolidado.xlsx", output_seca_cons))
 
-                # --- NUEVO: GUARDAR DATOS SECA PARA EL SAG ---
-                df_reset = df.reset_index()
-                if 'CONTENEDORINF' in df_reset.columns:
-                    df_reset = df_reset.rename(columns={'CONTENEDORINF': 'Contenedor'})
-                elif 'index' in df_reset.columns:
-                    df_reset = df_reset.rename(columns={'index': 'Contenedor'})
-                dfs_para_sag.append(df_reset)
 
         # SUB-PROCESO 2: MADERA VERDE
         remate_verde = remate[remate["producto"].astype(str).str.upper().str.contains("VERDE", na=False)].copy()
@@ -1457,6 +1458,7 @@ def procesar_cmpc_madera(rutas):
 
             # CONSOLIDADO VERDE
             tools_filtrado_v = tools[tools['CONTENEDORINF'].isin(remate_verde['CONTENEDORREM'])]
+            dfs_para_sag.append(tools_filtrado_v.copy())
             remate_matched_v = remate_verde.set_index("CONTENEDORREM")
             tools_matched_v = tools_filtrado_v.set_index("CONTENEDORINF")
             
@@ -1494,38 +1496,24 @@ def procesar_cmpc_madera(rutas):
                 output_verde_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Verde_Consolidado.xlsx", output_verde_cons))
 
-                # --- NUEVO: GUARDAR DATOS VERDE PARA EL SAG ---
-                df_v_reset = df_v.reset_index()
-                if 'CONTENEDORINF' in df_v_reset.columns:
-                    df_v_reset = df_v_reset.rename(columns={'CONTENEDORINF': 'Contenedor'})
-                elif 'index' in df_v_reset.columns:
-                    df_v_reset = df_v_reset.rename(columns={'index': 'Contenedor'})
-                dfs_para_sag.append(df_v_reset)
 
-        if not archivos_output:
-            return True, "Proceso finalizado, pero no se generaron archivos.", []
-
-        return True, "Archivos generados exitosamente", archivos_output
-
-    except Exception as e:
-        st.error(f"Error en procesamiento: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False, str(e), []
-# =========================================================
+        # =========================================================
         # --- NUEVO: GENERAR CONSOLIDADO SAG UNIFICADO ---
         # =========================================================
         if dfs_para_sag:
             df_sag_full = pd.concat(dfs_para_sag, ignore_index=True)
             
+            df_cons_sag = pd.DataFrame()
+            df_cons_sag['Contenedor'] = df_sag_full['CONTENEDORINF']
+            
+            if 'Nro_Paquete' in df_sag_full.columns:
+                df_cons_sag['Npaquete'] = df_sag_full['Nro_Paquete']
+            else:
+                df_cons_sag['Npaquete'] = ""
+            
             # Buscar la columna de peso real en el Tools original
             col_peso_tools = next((c for c in df_sag_full.columns if 'peso' in c.lower()), None)
             
-            df_cons_sag = pd.DataFrame()
-            df_cons_sag['Contenedor'] = df_sag_full['Contenedor']
-            df_cons_sag['Npaquete'] = df_sag_full['Nro_Paquete']
-            
-            # Extraer y limpiar el peso
             if col_peso_tools:
                 df_cons_sag['Peso'] = pd.to_numeric(df_sag_full[col_peso_tools].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
             else:
@@ -1535,18 +1523,19 @@ def procesar_cmpc_madera(rutas):
             df_cons_sag.to_excel(output_sag_cons, index=False, engine='openpyxl')
             output_sag_cons.seek(0)
             archivos_output.append(("CMPC_Madera_Consolidado_SAG.xlsx", output_sag_cons))
-
         # --- RETORNOS DENTRO DEL TRY ---
         if not archivos_output:
             return True, "Proceso finalizado, pero no se generaron archivos.", []
 
         return True, "Archivos generados exitosamente", archivos_output
 
-    except Exception as e: # <--- EL EXCEPT DEBE IR AL FINAL DE TODO
+    except Exception as e: # <--- UNICO EXCEPT AL FINAL DE LA FUNCIÓN
         st.error(f"Error en procesamiento: {str(e)}")
         import traceback
         traceback.print_exc()
         return False, str(e), []
+
+
         
 # ==========================================
 #      LÓGICA CMPC PAPEL (FINAL - NOTA POR CONTENEDOR)
