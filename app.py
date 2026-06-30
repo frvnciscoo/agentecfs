@@ -1232,7 +1232,27 @@ def procesar_cmpc_madera(rutas):
                 df_consolidado.to_excel(output_seca_cons, index=False, engine='openpyxl')
                 output_seca_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Seca_Consolidado.xlsx", output_seca_cons))
+                # =========================================================
+                # 2. NUEVO: CONSOLIDADO SAG (Nivel paquete + columnas extra)
+                # =========================================================
+                df_consolidado_sag = df_consolidado.copy()
+                
+                # Extraemos los datos provenientes de la tabla "df" (Tools cruzado con Remate).
+                # Nota: Asegúrate de que los nombres "Peso_lote", "Volumen_Lote" y "Sello_Inspector" 
+                # coincidan exactamente con cómo vienen en la cabecera del Excel "Tools" de CMPC.
+                
+                df_consolidado_sag["Peso"] = pd.to_numeric(df.get("Peso_lote", df.get("peso", 0)), errors="coerce").fillna(0)
+                df_consolidado_sag["Volumen"] = pd.to_numeric(df.get("Volumen_Lote", df.get("volumen_tools", 0)), errors="coerce").fillna(0)
+                df_consolidado_sag["Sello Inspector"] = df.get("Sello_Inspector", "")
 
+                # Exportamos a un nuevo archivo Excel
+                output_seca_sag = BytesIO()
+                df_consolidado_sag.to_excel(output_seca_sag, index=False, engine='openpyxl')
+                output_seca_sag.seek(0)
+                
+                # Lo agregamos al arreglo final para que se descargue
+                archivos_output.append(("CMPC_Madera_Seca_Consolidado_SAG.xlsx", output_seca_sag))
+                
         # SUB-PROCESO 2: MADERA VERDE
         remate_verde = remate[remate["producto"].astype(str).str.upper().str.contains("VERDE", na=False)].copy()
         
@@ -1304,7 +1324,26 @@ def procesar_cmpc_madera(rutas):
                 df_consolidado_v.to_excel(output_verde_cons, index=False, engine='openpyxl')
                 output_verde_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Verde_Consolidado.xlsx", output_verde_cons))
+                # =========================================================
+                # 2. NUEVO: CONSOLIDADO SAG (Nivel paquete + columnas extra)
+                # =========================================================
+                df_consolidado_sag = df_consolidado.copy()
+                
+                # Extraemos los datos provenientes de la tabla "df" (Tools cruzado con Remate).
+                # Nota: Asegúrate de que los nombres "Peso_lote", "Volumen_Lote" y "Sello_Inspector" 
+                # coincidan exactamente con cómo vienen en la cabecera del Excel "Tools" de CMPC.
+                
+                df_consolidado_sag["Peso"] = pd.to_numeric(df.get("Peso_lote", df.get("peso", 0)), errors="coerce").fillna(0)
+                df_consolidado_sag["Volumen"] = pd.to_numeric(df.get("Volumen_Lote", df.get("volumen_tools", 0)), errors="coerce").fillna(0)
+                df_consolidado_sag["Sello Inspector"] = df.get("Sello_Inspector", "")
 
+                # Exportamos a un nuevo archivo Excel
+                output_seca_sag = BytesIO()
+                df_consolidado_sag.to_excel(output_seca_sag, index=False, engine='openpyxl')
+                output_seca_sag.seek(0)
+                
+                # Lo agregamos al arreglo final para que se descargue
+                archivos_output.append(("CMPC_Madera_Seca_Consolidado_SAG.xlsx", output_seca_sag))
         if not archivos_output:
             return True, "Proceso finalizado, pero no se generaron archivos.", []
 
