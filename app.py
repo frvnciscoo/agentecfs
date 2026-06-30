@@ -1502,17 +1502,7 @@ def procesar_cmpc_madera(rutas):
                     df_v_reset = df_v_reset.rename(columns={'index': 'Contenedor'})
                 dfs_para_sag.append(df_v_reset)
 
-        if not archivos_output:
-            return True, "Proceso finalizado, pero no se generaron archivos.", []
-
-        return True, "Archivos generados exitosamente", archivos_output
-
-    except Exception as e:
-        st.error(f"Error en procesamiento: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False, str(e), []
-# =========================================================
+        # =========================================================
         # --- NUEVO: GENERAR CONSOLIDADO SAG UNIFICADO ---
         # =========================================================
         if dfs_para_sag:
@@ -1542,11 +1532,13 @@ def procesar_cmpc_madera(rutas):
 
         return True, "Archivos generados exitosamente", archivos_output
 
-    except Exception as e: # <--- EL EXCEPT DEBE IR AL FINAL DE TODO
+    except Exception as e: # <--- UNICO EXCEPT AL FINAL DE LA FUNCIÓN
         st.error(f"Error en procesamiento: {str(e)}")
         import traceback
         traceback.print_exc()
         return False, str(e), []
+
+
         
 # ==========================================
 #      LÓGICA CMPC PAPEL (FINAL - NOTA POR CONTENEDOR)
