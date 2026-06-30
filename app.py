@@ -1980,27 +1980,39 @@ def procesar_cmpc_sag(rutas):
             col_peso: "Peso Lote"
         })
         
-        # =========================================================
+         # =========================================================
         # PROCESO B: Agrupar Cabecera de Consolidado (1 fila por contenedor)
         # =========================================================
-        # Extraer Producto desde Remate
-        remate['sigla_cnt'] = remate.get('sigla_cnt', '').astype(str).str.strip()
-        remate['nro_cnt'] = remate.get('nro_cnt', '').astype(str).str.strip()
-        remate['dv_cnt'] = remate.get('dv_cnt', '').astype(str).str.strip()
+        # 1. Construcción segura del contenedor en el Remate
+        if all(col in remate.columns for col in ['sigla_cnt', 'nro_cnt', 'dv_cnt']):
+            remate['sigla_cnt'] = remate['sigla_cnt'].astype(str).str.strip()
+            remate['nro_cnt'] = remate['nro_cnt'].astype(str).str.strip()
+            remate['dv_cnt'] = remate['dv_cnt'].astype(str).str.strip()
+            
+            def construir_contenedor_rem(row):
+                sigla = str(row['sigla_cnt']).strip()
+                val_num = str(row['nro_cnt']).split('.')[0].strip()
+                dv = str(row['dv_cnt']).strip()
+                if val_num == 'nan' or val_num == '': return ""
+                return f"{sigla}-{val_num.zfill(6)}-{dv}"
+            
+            remate['Contenedor_Rem'] = remate.apply(construir_contenedor_rem, axis=1)
+        elif 'Contenedor' in remate.columns:
+            remate['Contenedor_Rem'] = remate['Contenedor'].astype(str).str.strip()
+        elif 'CONTENEDOR' in remate.columns:
+            remate['Contenedor_Rem'] = remate['CONTENEDOR'].astype(str).str.strip()
+        else:
+            remate['Contenedor_Rem'] = ""
+            
+        # 2. Extraer Producto y cruzar con Consolidado SAG
+        if 'producto' in remate.columns:
+            remate_subset = remate[['Contenedor_Rem', 'producto']].drop_duplicates(subset=['Contenedor_Rem'])
+            cons_sag = cons_sag.merge(remate_subset, left_on='Contenedor', right_on='Contenedor_Rem', how='left')
+            cons_sag['producto'] = cons_sag['producto'].fillna("CMPC")
+        else:
+            cons_sag['producto'] = "CMPC"
         
-        def construir_contenedor_rem(row):
-            sigla = str(row.get('sigla_cnt', '')).strip()
-            val_num = str(row.get('nro_cnt', '')).split('.')[0].strip()
-            dv = str(row.get('dv_cnt', '')).strip()
-            if val_num == 'nan' or val_num == '': return ""
-            return f"{sigla}-{val_num.zfill(6)}-{dv}"
-        
-        remate['Contenedor_Rem'] = remate.apply(construir_contenedor_rem, axis=1)
-        remate_subset = remate[['Contenedor_Rem', 'producto']].drop_duplicates(subset=['Contenedor_Rem'])
-        
-        cons_sag = cons_sag.merge(remate_subset, left_on='Contenedor', right_on='Contenedor_Rem', how='left')
-        cons_sag['producto'] = cons_sag['producto'].fillna("MADERA/CELULOSA")
-        
+        # 3. Preparar columnas numéricas para suma
         col_vol = "Volumen" if "Volumen" in cons_sag.columns else "Volumen_Calc"
         if col_vol in cons_sag.columns:
             cons_sag[col_vol] = pd.to_numeric(cons_sag[col_vol], errors='coerce').fillna(0)
