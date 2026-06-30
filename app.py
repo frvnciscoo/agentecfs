@@ -1851,7 +1851,7 @@ CONFIG_ARCHIVOS = {
         {"id": "programa", "nombre": "Programa", "opcional": False, "descripcion": "Último programa de consolidación"},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
         {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
-        {"id": "tools",    "nombre": "Tools",    "opcional": False, "descripcion": "Archivo unificado de consolidación"},
+        {"id": "tools",    "nombre": "Tools",    "opcional": False, "descripcion": "Subir tools con CB (Contrato,Contenedor,Expedicion,Tara,Cantidad,Sello_linea,Reserva,Orden_Embarque,Orden_Pedido,Cnt_Sigla,Cnt_DV,Cnt_Nro,Marca"},
         {"id": "zoopp",    "nombre": "Zoopp",    "opcional": False, "descripcion": "Consulta ZOOPP SAP"},
     ],
     "Celulosa": [
