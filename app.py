@@ -1073,7 +1073,7 @@ def procesar_cmpc_sag(rutas):
         if "Codigo_Barra" not in SAG.columns or "SIF" not in SAG.columns:
             return False, "Los archivos SIF no tienen las columnas 'Codigo_Barra' o 'SIF'.", []
             
-        SAG["Codigo_Barra"] = SAG["Codigo_Barra"].astype(str).str.strip()
+        SAG["PAQUETE"] = SAG["PAQUETE"].astype(str).str.strip()
         SAG['SIF_num'] = pd.to_numeric(SAG['SIF'], errors='coerce')
         SAG = SAG.sort_values(by=['Codigo_Barra', 'SIF_num'], ascending=[True, False])
         SAG = SAG.drop_duplicates(subset=['Codigo_Barra'], keep='first')
