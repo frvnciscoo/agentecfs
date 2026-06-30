@@ -997,22 +997,29 @@ def procesar_cmpc_sag(rutas):
         # 1. Cargar Remate
         remate = pd.read_excel(rutas['remate'])
         
-        remate['sigla_cnt'] = remate['sigla_cnt'].astype(str).str.strip()
-        remate['nro_cnt'] = remate['nro_cnt'].astype(str).str.strip()
-        remate['dv_cnt'] = remate['dv_cnt'].astype(str).str.strip()
+        # --- LÓGICA DE DETECCIÓN DE CONTENEDOR ---
+        # Si el remate ya tiene la columna 'Contenedor', la usamos. 
+        # Si no, intentamos armarla desde las columnas sigla/nro/dv
+        if 'Contenedor' in remate.columns:
+            remate['Contenedor'] = remate['Contenedor'].astype(str).str.strip()
+        elif all(col in remate.columns for col in ['sigla_cnt', 'nro_cnt', 'dv_cnt']):
+            remate['sigla_cnt'] = remate['sigla_cnt'].astype(str).str.strip()
+            remate['nro_cnt'] = remate['nro_cnt'].astype(str).str.strip()
+            remate['dv_cnt'] = remate['dv_cnt'].astype(str).str.strip()
 
-        def construir_contenedor_rem(row):
-            sigla = str(row['sigla_cnt']).strip()
-            val_num = str(row['nro_cnt'])
-            if '.' in val_num:
-                numero = val_num.split('.')[0].strip()
-            else:
-                numero = val_num.strip()
-            dv = str(row['dv_cnt']).strip()
-            return f"{sigla}-{numero.zfill(6)}-{dv}"
+            def construir_contenedor_rem(row):
+                sigla = str(row['sigla_cnt']).strip()
+                val_num = str(row['nro_cnt'])
+                if '.' in val_num: numero = val_num.split('.')[0].strip()
+                else: numero = val_num.strip()
+                dv = str(row['dv_cnt']).strip()
+                return f"{sigla}-{numero.zfill(6)}-{dv}"
 
-        remate['Contenedor'] = remate.apply(construir_contenedor_rem, axis=1)
-
+            remate['Contenedor'] = remate.apply(construir_contenedor_rem, axis=1)
+        else:
+            return False, "El archivo Remate no tiene la columna 'Contenedor' ni las columnas de desglose (sigla_cnt, etc).", []
+        
+        # ... resto de la función sigue igual ...
         # 2. Cargar Tools / Consolidado
         tools = pd.read_excel(rutas['tools'])
         
