@@ -1162,7 +1162,7 @@ def procesar_cmpc_madera(rutas):
             remate["producto"] = remate["producto"].astype(str).str.strip().str.upper()
 
         # SUB-PROCESO 1: MADERA SECA
-        remate_seca = remate[remate["producto"] == "MADERA SECA"].copy()
+        remate_seca = remate[remate["producto"].astype(str).str.upper().str.contains("SECA", na=False)].copy()
         
         if not remate_seca.empty:
             try:
@@ -1232,7 +1232,7 @@ def procesar_cmpc_madera(rutas):
                 archivos_output.append(("CMPC_Madera_Seca_Consolidado.xlsx", output_seca_cons))
 
         # SUB-PROCESO 2: MADERA VERDE
-        remate_verde = remate[remate["producto"] == "MADERA VERDE"].copy()
+        remate_verde = remate[remate["producto"].astype(str).str.upper().str.contains("VERDE", na=False)].copy()
         
         if not remate_verde.empty:
             try:
