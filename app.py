@@ -1232,28 +1232,6 @@ def procesar_cmpc_madera(rutas):
                 df_consolidado.to_excel(output_seca_cons, index=False, engine='openpyxl')
                 output_seca_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Seca_Consolidado.xlsx", output_seca_cons))
-                
-                # =========================================================
-                # NUEVO: ARCHIVO CONSOLIDADO SAG POR PAQUETE (SECA)
-                # =========================================================
-                df_consolidado_sag = pd.DataFrame({
-                    "Npaquete": df["Nro_Paquete"],
-                    "Contenedor": df.index,
-                    "Sello Naviera": df["sello_linea"],
-                    # Usamos .get() para evitar caídas si la columna no viene en Tools aún
-                    "Sello Inspector": df.get("Sello_Inspector", df.get("sello_inspector", "")),
-                    "Peso": df.get("Peso_lote", df.get("peso", 0)), 
-                    "Volumen": df.get("Volumen_Lote", df.get("volumen", 0)), 
-                    "Destino": df["pto_final"],
-                    "Reserva": df["reserva"],
-                    "Contrato": df["contrato"],
-                    "Item": df["item"]
-                })
-
-                output_seca_sag = BytesIO()
-                df_consolidado_sag.to_excel(output_seca_sag, index=False, engine='openpyxl')
-                output_seca_sag.seek(0)
-                archivos_output.append(("CMPC_Madera_Seca_Consolidado_SAG.xlsx", output_seca_sag))
 
         # SUB-PROCESO 2: MADERA VERDE
         remate_verde = remate[remate["producto"].astype(str).str.upper().str.contains("VERDE", na=False)].copy()
