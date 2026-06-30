@@ -1097,7 +1097,7 @@ def procesar_cmpc_celulosa(rutas):
         return False, str(e), []
 
 # ==========================================
-#      LÓGICA CMPC MADERA (MODIFICADA CON SAG)
+#      LÓGICA CMPC MADERA (FINAL - NOTA POR CONTENEDOR)
 # ==========================================
 def procesar_cmpc_madera(rutas):
     st.info("Iniciando procesamiento CMPC Madera...")
@@ -1139,23 +1139,6 @@ def procesar_cmpc_madera(rutas):
         tools['Cnt_Sigla'] = tools['Cnt_Sigla'].astype(str).str.strip()
         tools['Cnt_Nro'] = tools['Cnt_Nro'].astype(str).str.strip()
         tools['Cnt_DV'] = tools['Cnt_DV'].astype(str).str.strip()
-        
-        # =======================================================
-        # NUEVO: PREPARAR COLUMNAS PARA SAG DESDE TOOLS
-        # Buscamos columnas de Peso, Volumen y Sello Inspector
-        # =======================================================
-        col_peso_tools = next((c for c in tools.columns if 'peso' in c.lower()), 'Peso_lote')
-        col_vol_tools = next((c for c in tools.columns if 'volumen' in c.lower()), 'Volumen_Lote')
-        col_insp_tools = next((c for c in tools.columns if 'inspector' in c.lower()), 'Sello_Inspector')
-        
-        # Aseguramos que existan en tools
-        if col_peso_tools not in tools.columns: tools[col_peso_tools] = 0
-        if col_vol_tools not in tools.columns: tools[col_vol_tools] = 0
-        if col_insp_tools not in tools.columns: tools[col_insp_tools] = "SIN SELLO"
-        
-        # Convertimos a numérico reemplazando comas si las hay
-        tools[col_peso_tools] = pd.to_numeric(tools[col_peso_tools].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-        tools[col_vol_tools] = pd.to_numeric(tools[col_vol_tools].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
         def construir_contenedor_tools(row):
             sigla = str(row['Cnt_Sigla']).strip()
@@ -1174,18 +1157,17 @@ def procesar_cmpc_madera(rutas):
         mensajes_exito = []
         archivos_output = []
         
+        # Limpieza robusta de la columna producto
         if "producto" in remate.columns:
             remate["producto"] = remate["producto"].astype(str).str.strip().str.upper()
 
-        # ==========================================
         # SUB-PROCESO 1: MADERA SECA
-        # ==========================================
         remate_seca = remate[remate["producto"].astype(str).str.upper().str.contains("SECA", na=False)].copy()
         
         if not remate_seca.empty:
-            # ... (CÓDIGO ORIGINAL DE REMATE EXTRA SE MANTIENE AQUÍ) ...
             try:
                 remate_seca['Desc_Carga_Calc'] = remate_seca['cant_piezas'].astype(str) + " PIECES, CHILEAN RADIATA PINE"
+                
                 contenedores_unicos_s = remate_seca['CONTENEDORREM'].unique()
                 mapa_nota_s = {cnt: i+1 for i, cnt in enumerate(contenedores_unicos_s)}
 
@@ -1203,10 +1185,12 @@ def procesar_cmpc_madera(rutas):
                     "Volumen Bruto del Contenedor": remate_seca["volumen"], 
                     "Comentarios del Contenedor": remate_seca["pto_final"]
                 })
+                
                 output_seca_remate = BytesIO()
                 df_remate_extra_seca.to_excel(output_seca_remate, index=False, engine='openpyxl')
                 output_seca_remate.seek(0)
                 archivos_output.append(("Remate_CMPC_Madera_Seca.xlsx", output_seca_remate))
+                
             except Exception as e:
                 st.warning(f"Error generando Remate Extra Seca: {e}")
 
@@ -1248,55 +1232,36 @@ def procesar_cmpc_madera(rutas):
                 df_consolidado.to_excel(output_seca_cons, index=False, engine='openpyxl')
                 output_seca_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Seca_Consolidado.xlsx", output_seca_cons))
-
-                # ==============================================================
-                # NUEVO: GENERAR CONSOLIDADO SAG SECA AGRUPADO POR CONTENEDOR
-                # ==============================================================
-                df_sag_seca = df.groupby(df.index).agg({
-                    'contrato': 'first',
-                    'reserva': 'first',
-                    'pto_final': 'first',
-                    'producto': 'first',
-                    'sello_linea': 'first',
-                    col_insp_tools: 'first',      # Sello Inspector
-                    'Nro_Paquete': 'count',       # Conteo de paquetes
-                    col_peso_tools: 'sum',        # Sumatoria de peso desde tools
-                    col_vol_tools: 'sum'          # Sumatoria de volumen desde tools
-                }).reset_index()
-
-                df_sag_seca = df_sag_seca.rename(columns={
-                    'index': 'Contenedor',
-                    'contrato': 'Entrega',
-                    'reserva': 'Reserva',
-                    'pto_final': 'Pto Destino',
-                    'producto': 'Clase de Producto',
-                    'sello_linea': 'Sello',
-                    col_insp_tools: 'Sello Inspector',
-                    'Nro_Paquete': 'Cantidad de Lotes',
-                    col_peso_tools: 'Peso Total (kg)',
-                    col_vol_tools: 'Volumen Total (m3)'
+                
+                # =========================================================
+                # NUEVO: ARCHIVO CONSOLIDADO SAG POR PAQUETE (SECA)
+                # =========================================================
+                df_consolidado_sag = pd.DataFrame({
+                    "Npaquete": df["Nro_Paquete"],
+                    "Contenedor": df.index,
+                    "Sello Naviera": df["sello_linea"],
+                    # Usamos .get() para evitar caídas si la columna no viene en Tools aún
+                    "Sello Inspector": df.get("Sello_Inspector", df.get("sello_inspector", "")),
+                    "Peso": df.get("Peso_lote", df.get("peso", 0)), 
+                    "Volumen": df.get("Volumen_Lote", df.get("volumen", 0)), 
+                    "Destino": df["pto_final"],
+                    "Reserva": df["reserva"],
+                    "Contrato": df["contrato"],
+                    "Item": df["item"]
                 })
 
-                # Ordenar columnas al estilo SAG
-                cols_sag = ["Entrega", "Reserva", "Pto Destino", "Clase de Producto", "Contenedor", 
-                            "Sello", "Sello Inspector", "Cantidad de Lotes", "Peso Total (kg)", "Volumen Total (m3)"]
-                
-                df_sag_seca = df_sag_seca[[c for c in cols_sag if c in df_sag_seca.columns]]
+                output_seca_sag = BytesIO()
+                df_consolidado_sag.to_excel(output_seca_sag, index=False, engine='openpyxl')
+                output_seca_sag.seek(0)
+                archivos_output.append(("CMPC_Madera_Seca_Consolidado_SAG.xlsx", output_seca_sag))
 
-                output_sag_seca = BytesIO()
-                df_sag_seca.to_excel(output_sag_seca, index=False, engine='openpyxl')
-                output_sag_seca.seek(0)
-                archivos_output.append(("CMPC_Madera_Seca_Consolidado_SAG.xlsx", output_sag_seca))
-
-        # ==========================================
         # SUB-PROCESO 2: MADERA VERDE
-        # ==========================================
         remate_verde = remate[remate["producto"].astype(str).str.upper().str.contains("VERDE", na=False)].copy()
         
         if not remate_verde.empty:
-            # ... (CÓDIGO ORIGINAL DE REMATE EXTRA SE MANTIENE AQUÍ) ...
             try:
                 remate_verde['Desc_Carga_Calc'] = remate_verde['cant_piezas'].astype(str) + " PIECES, CHILEAN RADIATA PINE"
+                
                 contenedores_unicos_v = remate_verde['CONTENEDORREM'].unique()
                 mapa_nota_v = {cnt: i+1 for i, cnt in enumerate(contenedores_unicos_v)}
 
@@ -1314,10 +1279,12 @@ def procesar_cmpc_madera(rutas):
                     "Volumen Bruto del Contenedor": remate_verde["volumen"],
                     "Comentarios del Contenedor": remate_verde["pto_final"]
                 })
+                
                 output_verde_remate = BytesIO()
                 df_remate_extra_verde.to_excel(output_verde_remate, index=False, engine='openpyxl')
                 output_verde_remate.seek(0)
                 archivos_output.append(("Remate_CMPC_Madera_Verde.xlsx", output_verde_remate))
+                
             except Exception as e:
                 st.warning(f"Error generando Remate Extra Verde: {e}")
 
@@ -1359,41 +1326,6 @@ def procesar_cmpc_madera(rutas):
                 df_consolidado_v.to_excel(output_verde_cons, index=False, engine='openpyxl')
                 output_verde_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Verde_Consolidado.xlsx", output_verde_cons))
-
-                # ==============================================================
-                # NUEVO: GENERAR CONSOLIDADO SAG VERDE AGRUPADO POR CONTENEDOR
-                # ==============================================================
-                df_sag_verde = df_v.groupby(df_v.index).agg({
-                    'contrato': 'first',
-                    'reserva': 'first',
-                    'pto_final': 'first',
-                    'producto': 'first',
-                    'sello_linea': 'first',
-                    col_insp_tools: 'first',
-                    'Nro_Paquete': 'count',
-                    col_peso_tools: 'sum',
-                    col_vol_tools: 'sum'
-                }).reset_index()
-
-                df_sag_verde = df_sag_verde.rename(columns={
-                    'index': 'Contenedor',
-                    'contrato': 'Entrega',
-                    'reserva': 'Reserva',
-                    'pto_final': 'Pto Destino',
-                    'producto': 'Clase de Producto',
-                    'sello_linea': 'Sello',
-                    col_insp_tools: 'Sello Inspector',
-                    'Nro_Paquete': 'Cantidad de Lotes',
-                    col_peso_tools: 'Peso Total (kg)',
-                    col_vol_tools: 'Volumen Total (m3)'
-                })
-
-                df_sag_verde = df_sag_verde[[c for c in cols_sag if c in df_sag_verde.columns]]
-
-                output_sag_verde = BytesIO()
-                df_sag_verde.to_excel(output_sag_verde, index=False, engine='openpyxl')
-                output_sag_verde.seek(0)
-                archivos_output.append(("CMPC_Madera_Verde_Consolidado_SAG.xlsx", output_sag_verde))
 
         if not archivos_output:
             return True, "Proceso finalizado, pero no se generaron archivos.", []
