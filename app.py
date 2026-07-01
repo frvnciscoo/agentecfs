@@ -1156,13 +1156,9 @@ def procesar_cmpc_madera(rutas):
 
         mensajes_exito = []
         archivos_output = []
-        
-        # Limpieza robusta de la columna producto
-        if "producto" in remate.columns:
-            remate["producto"] = remate["producto"].astype(str).str.strip().str.upper()
 
         # SUB-PROCESO 1: MADERA SECA
-        remate_seca = remate[remate["producto"].astype(str).str.upper().str.contains("SECA", na=False)].copy()
+        remate_seca = remate[remate["producto"] == "MADERA SECA"].copy()
         
         if not remate_seca.empty:
             try:
@@ -1202,9 +1198,7 @@ def procesar_cmpc_madera(rutas):
             df = tools_matched.join(remate_matched, how="left", rsuffix="_rem")
             
             if not df.empty:
-                split_pedido = df['Orden_Pedido'].astype(str).str.split('-', n=1)
-                df['contrato'] = split_pedido.str[0]
-                df['item'] = split_pedido.str[1]
+                df[['contrato', 'item']] = df['Orden_Pedido'].astype(str).str.split('-', n=1, expand=True)
                 df['fecha_dus'] = pd.to_datetime(df['fecha_aceptacion'], errors='coerce').dt.strftime('%d/%m/%Y')
 
                 df_consolidado = pd.DataFrame({
@@ -1234,7 +1228,7 @@ def procesar_cmpc_madera(rutas):
                 archivos_output.append(("CMPC_Madera_Seca_Consolidado.xlsx", output_seca_cons))
 
         # SUB-PROCESO 2: MADERA VERDE
-        remate_verde = remate[remate["producto"].astype(str).str.upper().str.contains("VERDE", na=False)].copy()
+        remate_verde = remate[remate["producto"] == "MADERA VERDE"].copy()
         
         if not remate_verde.empty:
             try:
@@ -1274,9 +1268,7 @@ def procesar_cmpc_madera(rutas):
             df_v = tools_matched_v.join(remate_matched_v, how="left", rsuffix="_rem")
             
             if not df_v.empty:
-                split_pedido_v = df_v['Orden_Pedido'].astype(str).str.split('-', n=1)
-                df_v['contrato'] = split_pedido_v.str[0]
-                df_v['item'] = split_pedido_v.str[1]
+                df_v[['contrato', 'item']] = df_v['Orden_Pedido'].astype(str).str.split('-', n=1, expand=True)
                 df_v['fecha_dus'] = pd.to_datetime(df_v['fecha_aceptacion'], errors='coerce').dt.strftime('%d/%m/%Y')
 
                 df_consolidado_v = pd.DataFrame({
@@ -1859,7 +1851,7 @@ CONFIG_ARCHIVOS = {
         {"id": "programa", "nombre": "Programa", "opcional": False, "descripcion": "Último programa de consolidación"},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
         {"id": "historico","nombre": "Remates Ant.", "opcional": True, "multiple": True},
-        {"id": "tools",    "nombre": "Tools",    "opcional": False, "descripcion": "Subir tools con CB (Contrato,Contenedor,Expedicion,Tara,Cantidad,Sello_linea,Reserva,Orden_Embarque,Orden_Pedido,Cnt_Sigla,Cnt_DV,Cnt_Nro,Marca"},
+        {"id": "tools",    "nombre": "Tools",    "opcional": False, "descripcion": "Archivo unificado de consolidación"},
         {"id": "zoopp",    "nombre": "Zoopp",    "opcional": False, "descripcion": "Consulta ZOOPP SAP"},
     ],
     "Celulosa": [
@@ -1878,8 +1870,8 @@ CONFIG_ARCHIVOS = {
         {"id": "tools",  "nombre": "Tools",  "opcional": False},
     ],
     "CMPC Madera": [
-        {"id": "remate", "nombre": "Remate", "opcional": False, "descripcion": "Prog. Consolidación -> Consolidaciones con Transmiciones Electrónicas"},
-        {"id": "informe", "nombre": "Tools", "opcional": False, "descripcion": "Tools -> Despacho a Contenedor con Código de Barra"},
+        {"id": "remate", "nombre": "Remate", "opcional": False},
+        {"id": "informe", "nombre": "Tools", "opcional": False},
     ],
     "CMPC Papel": [
         {"id": "remate", "nombre": "Remate", "opcional": False},
