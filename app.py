@@ -938,7 +938,7 @@ def procesar_sag(rutas):
             "Pto Destino": "first",
             "Clase de Producto": "first",
             "Sello": "first",
-            "Sello_Inspector": "first",
+            "Sello Inspector": "first",
             "Peso Total (kg)": "sum",
             "Volumen Total (m3)": "sum"
         }
@@ -1243,7 +1243,7 @@ def procesar_cmpc_madera(rutas):
                 
                 df_consolidado_sag["Peso"] = pd.to_numeric(df.get("Peso_lote", df.get("peso", 0)), errors="coerce").fillna(0)
                 df_consolidado_sag["Volumen"] = pd.to_numeric(df.get("Volumen_Lote", df.get("volumen_tools", 0)), errors="coerce").fillna(0)
-                df_consolidado_sag["Sello Inspector"] = df.get("Sello Inspector", "")
+                df_consolidado_sag["Sello Inspector"] = df.get("Sello_Inspector", "")
 
                 # Exportamos a un nuevo archivo Excel
                 output_seca_sag = BytesIO()
@@ -1335,7 +1335,7 @@ def procesar_cmpc_madera(rutas):
                 
                 df_consolidado_sag["Peso"] = pd.to_numeric(df.get("Peso_lote", df.get("peso", 0)), errors="coerce").fillna(0)
                 df_consolidado_sag["Volumen"] = pd.to_numeric(df.get("Volumen_Lote", df.get("volumen_tools", 0)), errors="coerce").fillna(0)
-                df_consolidado_sag["Sello Inspector"] = df.get("Sello Inspector", "")
+                df_consolidado_sag["Sello Inspector"] = df.get("Sello_Inspector", "")
 
                 # Exportamos a un nuevo archivo Excel
                 output_seca_sag = BytesIO()
