@@ -1325,25 +1325,22 @@ def procesar_cmpc_madera(rutas):
                 output_verde_cons.seek(0)
                 archivos_output.append(("CMPC_Madera_Verde_Consolidado.xlsx", output_verde_cons))
                 # =========================================================
-                # 2. NUEVO: CONSOLIDADO SAG (Nivel paquete + columnas extra)
+                # 2. NUEVO: CONSOLIDADO SAG VERDE (Nivel paquete + columnas extra)
                 # =========================================================
-                df_consolidado_sag = df_consolidado.copy()
+                df_consolidado_sag_v = df_consolidado_v.copy()
                 
-                # Extraemos los datos provenientes de la tabla "df" (Tools cruzado con Remate).
-                # Nota: Asegúrate de que los nombres "Peso_lote", "Volumen_Lote" y "Sello_Inspector" 
-                # coincidan exactamente con cómo vienen en la cabecera del Excel "Tools" de CMPC.
-                
-                df_consolidado_sag["Peso"] = pd.to_numeric(df.get("Peso_lote", df.get("peso", 0)), errors="coerce").fillna(0)
-                df_consolidado_sag["Volumen"] = pd.to_numeric(df.get("Volumen_Lote", df.get("volumen_tools", 0)), errors="coerce").fillna(0)
-                df_consolidado_sag["Sello Inspector"] = df.get("Sello_Inspector", "")
+                # Extraemos los datos provenientes de la tabla "df_v" 
+                df_consolidado_sag_v["Peso"] = pd.to_numeric(df_v.get("Peso_lote", df_v.get("peso", 0)), errors="coerce").fillna(0)
+                df_consolidado_sag_v["Volumen"] = pd.to_numeric(df_v.get("Volumen_Lote", df_v.get("volumen_tools", 0)), errors="coerce").fillna(0)
+                df_consolidado_sag_v["Sello Inspector"] = df_v.get("Sello_Inspector", "")
 
                 # Exportamos a un nuevo archivo Excel
-                output_seca_sag = BytesIO()
-                df_consolidado_sag.to_excel(output_seca_sag, index=False, engine='openpyxl')
-                output_seca_sag.seek(0)
+                output_verde_sag = BytesIO()
+                df_consolidado_sag_v.to_excel(output_verde_sag, index=False, engine='openpyxl')
+                output_verde_sag.seek(0)
                 
-                # Lo agregamos al arreglo final para que se descargue
-                archivos_output.append(("CMPC_Madera_Seca_Consolidado_SAG.xlsx", output_seca_sag))
+                # Lo agregamos al arreglo final para que se descargue con el nombre correcto
+                archivos_output.append(("CMPC_Madera_Verde_Consolidado_SAG.xlsx", output_verde_sag))
         if not archivos_output:
             return True, "Proceso finalizado, pero no se generaron archivos.", []
 
