@@ -791,14 +791,16 @@ def procesar_celulosa(rutas):
         # ==========================================
         #   GENERAR EXCEL FINAL UNIFICADO
         # ==========================================
-    if df_final_agrupado.empty:
-        entregas_prog = set(prog_filtrado['Entrega'].unique())
-        entregas_tools = set(tools['Contrato'].unique()) if 'Contrato' in tools.columns else set()
+        if df_final_agrupado.empty:
+            entregas_prog = set(prog_filtrado['Entrega'].unique())
+            entregas_tools = set(tools['Contrato'].unique()) if 'Contrato' in tools.columns else set()
+            
+            st.warning(f"Ejemplo Entregas en Programa: {list(entregas_prog)[:3]}")
+            st.warning(f"Ejemplo Contratos en Tools: {list(entregas_tools)[:3]}")
+            
+            return False, "No se pudo cruzar información de Tools con el Programa. Verifique las entregas.", []
     
-        st.warning(f"Ejemplo Entregas en Programa: {list(entregas_prog)[:3]}")
-        st.warning(f"Ejemplo Contratos en Tools: {list(entregas_tools)[:3]}")
-    
-    return False, "No se pudo cruzar información de Tools con el Programa. Verifique las entregas.", []
+
 
         columnas_finales = ["BOX", "TARA", "BULTOS", "UNI", "LOTE", "SELLO", "RESERVA", "DUS", "MAX"]
         
