@@ -684,6 +684,182 @@ def procesar_celulosa(rutas):
 
         if prog_filtrado.empty:
             return False, "No hay entregas válidas para Celulosa (BKP/EKP/UKP o DP) tras aplicar filtros.", []
+
+        def obtener_linea(nav):
+            nav = str(nav).upper().strip()
+            if "MSC" in nav: return "MSC"
+            if "ONEY" in nav: return "ONE"
+            if "HLL" in nav: return "HAPAG LLOYD"
+            if "MAERSK" in nav or "ML" in nav: return "MAERSK"
+            return nav
+
+        prog_filtrado['NAV_CLEAN'] = prog_filtrado['NAV'].apply(obtener_linea)
+        
+        metadata_dict = prog_filtrado.set_index('Entrega')[
+            ['Nave', 'DESTINO', 'RESERVA', 'PRODINFO', 'NAV_CLEAN']
+        ].to_dict('index')
+
+        df_final_agrupado = pd.DataFrame()
+
+        # ==========================================
+        #   SUB-PROCESO A: CELULOSA BKP / EKP / UKP
+        # ==========================================
+        prog_cb = prog_filtrado[prog_filtrado["PRODINFO"].isin(["CEL BKP", "CEL UKP", "CEL EKP"])]
+        if not prog_cb.empty:
+            if "Contrato" in tools.columns and "Expedicion" in tools.columns:
+                entregas_validas_cb = prog_cb["Entrega"].unique()
+                tools_cb = tools[tools["Contrato"].isin(entregas_validas_cb)].copy()
+                
+                if not tools_cb.empty:
+                    tools_cb["Contenedor"] = tools_cb["Contenedor"].astype(str).str.strip()
+                    tools_cb["Expedicion"] = tools_cb["Expedicion"].astype(str).str.strip()
+                    
+                    def normalizar_box(contenedor):
+                        contenedor = str(contenedor).replace('.0', '')
+                        partes = contenedor.split('-')
+                        if len(partes) == 3:
+                            parte_media_normalizada = partes[1].zfill(6)
+                            return f"{partes[0]}-{parte_media_normalizada}-{partes[2]}"
+                        return contenedor
+
+                    tools_cb["BOX"] = tools_cb["Contenedor"].apply(normalizar_box)
+                    tools_cb["TARA"] = tools_cb["Tara"]
+                    tools_cb["LOTE"] = tools_cb["Expedicion"]
+                    tools_cb["BULTOS"] = tools_cb["Cantidad"]
+                    tools_cb["SELLO"] = tools_cb["Sello_linea"]
+                    tools_cb["RESERVA"] = tools_cb["Reserva"]
+                    tools_cb["DUS"] = tools_cb["Orden_Embarque"]
+                    tools_cb["MAX"] = tools_cb.get("Max_Gross", 999999)
+
+                    df_agrupado_cb = (
+                        tools_cb.groupby(["Contrato", "BOX", "LOTE"], as_index=False)
+                          .agg({
+                              "TARA": "first", "BULTOS": "sum", "SELLO": "first",
+                              "RESERVA": "first", "DUS": "first", "MAX": "first"
+                          })
+                    )
+                    df_agrupado_cb["UNI"] = df_agrupado_cb["BULTOS"] / 8
+                    df_final_agrupado = pd.concat([df_final_agrupado, df_agrupado_cb], ignore_index=True)
+            else:
+                st.warning("El archivo Tools no contiene las columnas necesarias para BKP/EKP/UKP (Contrato, Expedicion).")
+
+        # ==========================================
+        #   SUB-PROCESO B: CELULOSA DP
+        # ==========================================
+        prog_dp = prog_filtrado[prog_filtrado["PRODINFO"].isin(["CEL DP"])]
+        if not prog_dp.empty:
+            if "Orden_Pedido" in tools.columns and "Cnt_Sigla" in tools.columns:
+                entregas_validas_dp = prog_dp["Entrega"].unique()
+                tools_dp = tools[tools["Orden_Pedido"].isin(entregas_validas_dp)].copy()
+                
+                if not tools_dp.empty:
+                    tools_dp['Cnt_Sigla'] = tools_dp['Cnt_Sigla'].astype(str).str.strip()
+                    tools_dp['Cnt_Nro'] = tools_dp['Cnt_Nro'].astype(str).str.strip()
+                    tools_dp['Cnt_DV'] = tools_dp['Cnt_DV'].astype(str).str.strip()
+
+                    def normalizar_box_tools(row):
+                        sigla = str(row['Cnt_Sigla']).strip()
+                        val_num = str(row['Cnt_Nro']).split('.')[0].strip() if '.' in str(row['Cnt_Nro']) else str(row['Cnt_Nro']).strip()
+                        # Extraemos solo el número antes del punto decimal para el DV
+                        dv = str(row['Cnt_DV']).split('.')[0].strip() if '.' in str(row['Cnt_DV']) else str(row['Cnt_DV']).strip()
+                        return f"{sigla}-{val_num.zfill(6)}-{dv}"
+
+                    tools_dp['BOX'] = tools_dp.apply(normalizar_box_tools, axis=1)
+                    tools_dp["Contrato"] = tools_dp["Orden_Pedido"].astype(str).str.strip() # Homologar nombre
+                    tools_dp["TARA"] = tools_dp["Tara"]
+                    tools_dp["LOTE"] = tools_dp["Marca"]
+                    tools_dp["SELLO"] = tools_dp["Sello_linea"]
+                    tools_dp["RESERVA"] = tools_dp["Reserva"]
+                    tools_dp["DUS"] = tools_dp["Orden_Embarque"]
+                    tools_dp["MAX"] = tools_dp.get("Max_Gross", 999999) 
+
+                    tools_dp = tools_dp[tools_dp["SELLO"].notna() & (tools_dp["SELLO"].astype(str).str.strip() != "")]
+
+                    df_agrupado_dp = tools_dp.groupby(["Contrato", "BOX", "LOTE"]).agg({
+                        "TARA": "first", "SELLO": "first", "RESERVA": "first",
+                        "DUS": "first", "MAX": "first"
+                    })
+                    
+                    df_agrupado_dp["UNI"] = tools_dp.groupby(["Contrato", "BOX", "LOTE"]).size()
+                    df_agrupado_dp = df_agrupado_dp.reset_index()
+                    df_agrupado_dp["BULTOS"] = df_agrupado_dp["UNI"] * 8
+                    
+                    df_final_agrupado = pd.concat([df_final_agrupado, df_agrupado_dp], ignore_index=True)
+            else:
+                st.warning("El archivo Tools no contiene las columnas necesarias para DP (Orden_Pedido, Cnt_Sigla).")
+
+        # ==========================================
+        #   GENERAR EXCEL FINAL UNIFICADO
+        # ==========================================
+    if df_final_agrupado.empty:
+        entregas_prog = set(prog_filtrado['Entrega'].unique())
+        entregas_tools = set(tools['Contrato'].unique()) if 'Contrato' in tools.columns else set()
+    
+        st.warning(f"Ejemplo Entregas en Programa: {list(entregas_prog)[:3]}")
+        st.warning(f"Ejemplo Contratos en Tools: {list(entregas_tools)[:3]}")
+    
+    return False, "No se pudo cruzar información de Tools con el Programa. Verifique las entregas.", []
+
+        columnas_finales = ["BOX", "TARA", "BULTOS", "UNI", "LOTE", "SELLO", "RESERVA", "DUS", "MAX"]
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            for contrato, data in df_final_agrupado.groupby("Contrato"):
+                hoja = str(contrato)
+                data_limpia = data[columnas_finales]
+                
+                data_limpia.to_excel(writer, sheet_name=hoja, index=False, startrow=5)
+
+                ws = writer.sheets[hoja]
+                meta = metadata_dict.get(hoja, {})
+                
+                datos_cabecera = {
+                    'nave': meta.get('Nave', ''),
+                    'destino': meta.get('DESTINO', ''),
+                    'reserva': meta.get('RESERVA', ''),
+                    'contrato': hoja,
+                    'exportador': "ARAUCO",
+                    'embarcador': "CELULOSA ARAUCO",
+                    'carga': meta.get('PRODINFO', ''),
+                    'linea': meta.get('NAV_CLEAN', '')
+                }
+                agregar_cabecera_arauco(ws, datos_cabecera)
+
+        wb = load_workbook(output)
+
+        # Merge de celdas BOX para visualización
+        for sheetname in wb.sheetnames:
+            ws = wb[sheetname]
+            header_row_idx = 6
+            idx_box = next((cell.col_idx for cell in ws[header_row_idx] if cell.value == "BOX"), 1)
+            
+            start = header_row_idx + 1
+            max_row = ws.max_row
+            
+            while start <= max_row:
+                valor = ws.cell(row=start, column=idx_box).value
+                end = start
+                while end + 1 <= max_row and ws.cell(row=end + 1, column=idx_box).value == valor:
+                    end += 1
+                
+                if end > start:
+                    ws.merge_cells(start_row=start, start_column=idx_box, end_row=end, end_column=idx_box)
+                    ws.cell(row=start, column=idx_box).alignment = Alignment(vertical="center")
+                
+                start = end + 1
+
+        final_output = BytesIO()
+        wb.save(final_output)
+        final_output.seek(0)
+
+        return True, "Archivo consolidado generado correctamente", [("RemateCelulosa.xlsx", final_output)]
+
+    except Exception as e:
+        st.error(f"Error en procesamiento: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e), []
+
 # ==========================================
 #      LÓGICA DE SAG 
 # ==========================================
