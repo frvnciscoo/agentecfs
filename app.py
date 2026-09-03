@@ -1016,6 +1016,191 @@ def procesar_sag(rutas):
         import traceback
         traceback.print_exc()
         return False, str(e), []
+# =========================================================
+# Cruzar Stock
+# =========================================================       
+def procesar_cruzar_stock(rutas):
+    st.info("Iniciando Cruce de Stock (Sin Medidas)...")
+    try:
+        # 1. Cargar ZOOPP
+        ruta_zoopp = rutas['zoopp']
+        if ruta_zoopp.lower().endswith('.dbf'):
+            zoop_dbf = DBF(ruta_zoopp, load=True, encoding='latin1', char_decode_errors='ignore')
+            df_zoop = pd.DataFrame(iter(zoop_dbf))
+        else:
+            df_zoop = pd.read_excel(ruta_zoopp)
+
+        # 2. Cargar INVSVTI
+        df_inv = pd.read_excel(rutas['invsvti'])
+        df_inv = df_inv.map(lambda x: str(x).replace('\x00', '').strip() if isinstance(x, str) else x)
+
+        # --- PREPARACIÓN DE DATOS ---
+        # Aseguramos nombres de columna ignorando mayúsculas/minúsculas para evitar KeyError
+        df_zoop.columns = df_zoop.columns.str.lower()
+        
+        df_zoop['loteof'] = df_zoop['loteof'].astype(str).str.strip()
+        df_inv['Codigo_Barra'] = df_inv['Codigo_Barra'].astype(str).str.strip()
+
+        df_zoop['material'] = df_zoop['material'].astype(str).str.lstrip('0')
+        df_zoop['Es_Valido'] = df_zoop['loteof'].apply(lambda x: 1 if x != '' and x.lower() != 'nan' else 0)
+
+        df_zoop['vollote'] = df_zoop['vollote'].astype(str).str.replace(',', '.')
+        df_zoop['voltran'] = df_zoop['voltran'].astype(str).str.replace(',', '.')
+        df_zoop['vollote'] = pd.to_numeric(df_zoop['vollote'], errors='coerce').fillna(0)
+        df_zoop['voltran'] = pd.to_numeric(df_zoop['voltran'], errors='coerce').fillna(0)
+        
+        df_zoop['Volumen_Item'] = df_zoop['vollote'] + df_zoop['voltran']
+
+        stock_real = set(df_inv['Codigo_Barra'])
+        df_zoop['Es_Recibido'] = df_zoop['loteof'].isin(stock_real)
+        
+        df_zoop['Volumen_Recibido'] = df_zoop.apply(
+            lambda row: row['Volumen_Item'] if row['Es_Recibido'] else 0, axis=1
+        )
+
+        # HOJA 1: RESUMEN
+        df_resumen = df_zoop.groupby(['nave', 'entrega']).agg(
+            FETA=('feta', 'first'),
+            Pais=('pais', 'first'),
+            Destino=('ptodes', 'first'),                                                   
+            Producto=('clase_merc', 'first'),                  
+            Contenedores=('contsol', 'first'),  
+            Grupo_Entrega=('grpent', 'first'),            
+            CodAutEmb=('codautemb', 'first'),             
+            Total_Paquetes=('Es_Valido', 'sum'),                 
+            Total_M3=('Volumen_Item', 'sum'),                  
+            Paquetes_Recibidos=('Es_Recibido', 'sum'),         
+            M3_Recibidos=('Volumen_Recibido', 'sum'),           
+        ).reset_index()
+
+        df_resumen.rename(columns={
+            'nave': 'Nave',
+            'entrega': 'Entrega',
+            'Grupo_Entrega': 'Grupo de Entrega',          
+            'CodAutEmb': 'CodAutEmb',                     
+            'Total_Paquetes': 'Total Paquetes',
+            'Total_M3': 'Total M3',
+            'Paquetes_Recibidos': 'Paquetes Recibidos',
+            'M3_Recibidos': 'M3 Recibidos'
+        }, inplace=True)
+
+        df_resumen['Paquetes Restantes'] = df_resumen['Total Paquetes'] - df_resumen['Paquetes Recibidos']
+        df_resumen['M3 Restantes'] = (df_resumen['Total M3'] - df_resumen['M3 Recibidos']).round(3)
+
+        df_resumen['% Paquetes'] = df_resumen.apply(
+            lambda x: (x['Paquetes Recibidos'] / x['Total Paquetes'] * 100) if x['Total Paquetes'] > 0 else 0, axis=1
+        ).round(2)
+        df_resumen['% M3'] = df_resumen.apply(
+            lambda x: (x['M3 Recibidos'] / x['Total M3'] * 100) if x['Total M3'] > 0 else 0, axis=1
+        ).round(2)
+        
+        df_resumen['Total M3'] = df_resumen['Total M3'].round(3)
+        df_resumen['M3 Recibidos'] = df_resumen['M3 Recibidos'].round(3)
+
+        # HOJA DETALLE (SIN ARCHIVO DE MEDIDAS)
+        df_detalle = df_zoop.copy()
+        df_detalle['desmat'] = df_detalle['desmat'].astype(str).str.strip()
+        
+        df_inv_extra = df_inv[['Codigo_Barra', 'Peso', 'Marca', 'Fecha_Recepcion', 'Tarjador']].drop_duplicates(subset=['Codigo_Barra'])
+        df_inv_extra.rename(columns={'Marca': 'Marca_INV'}, inplace=True)
+        
+        df_detalle = pd.merge(
+            df_detalle,
+            df_inv_extra,
+            how='left',
+            left_on='loteof',
+            right_on='Codigo_Barra'
+        )
+        
+        df_detalle['Peso'] = df_detalle['Peso'].fillna(0)
+        df_detalle['Fecha_Recepcion'] = df_detalle['Fecha_Recepcion'].fillna('No Recibido')
+        df_detalle['Tarjador'] = df_detalle['Tarjador'].fillna('')
+
+        df_detalle['LLegada'] = df_detalle['Es_Recibido'].apply(lambda x: 'SI' if x else 'NO')
+
+        df_detalle.rename(columns={
+            'nave': 'Nave',
+            'feta': 'Feta',
+            'loteof': 'Paquete',
+            'desmat': 'Des',
+            'volumen_item': 'Volumen',
+            'entrega': 'Pedido',
+            'ptodes': 'Destino',
+            'pais': 'Pais',
+            'material': 'Material',
+            'nombre': 'Nombre',
+            'grpent': 'Grupo de Entrega',
+            'codautemb': 'CodAutEmb'
+        }, inplace=True)
+
+        columnas_detalle = [
+            'Nave', 'Feta', 'Paquete', 'Material', 'Nombre', 'Des', 'Volumen', 'Pedido', 
+            'Grupo de Entrega', 'CodAutEmb',
+            'Peso', 'LLegada', 'Fecha_Recepcion', 'Tarjador', 'Destino', 'Pais'
+        ]
+        
+        columnas_existentes = [col for col in columnas_detalle if col in df_detalle.columns]
+        df_detalle = df_detalle[columnas_existentes]
+
+        # HOJA GENERAL Y JAPÓN
+        df_general = df_detalle.copy()
+        # Flexibilidad en caso de que el encoding rompa el tilde
+        df_japon = df_detalle[df_detalle['Pais'].astype(str).str.contains('Jap', case=False, na=False)].copy()
+
+        def resaltar_duplicados(df):
+            duplicados = df.duplicated(subset=['Pedido', 'Peso', 'Volumen'], keep=False)
+            estilos = pd.DataFrame('', index=df.index, columns=df.columns)
+            estilos.loc[duplicados, :] = 'background-color: #FF9999; color: black;'
+            return estilos
+
+        # HOJA ESTADÍSTICAS
+        df_analisis = df_japon[df_japon['Nombre'].notna() & (df_japon['Nombre'].astype(str).str.strip() != '')].copy()
+
+        df_stats = df_analisis.groupby(['Nombre', 'Material']).agg(
+            Cantidad=('Paquete', 'count'),
+            Volumen_Promedio=('Volumen', 'mean'),
+            Volumen_Desviacion=('Volumen', 'std'),
+            Peso_Promedio=('Peso', 'mean'),
+            Peso_Desviacion=('Peso', 'std')
+        ).reset_index()
+
+        df_stats['Volumen_Desviacion'] = df_stats['Volumen_Desviacion'].fillna(0)
+        df_stats['Peso_Desviacion'] = df_stats['Peso_Desviacion'].fillna(0)
+
+        Z = 1.96
+        cant_safe = df_stats['Cantidad'].replace(0, 1)
+        df_stats['Vol_IC_95_Inf'] = df_stats['Volumen_Promedio'] - (Z * (df_stats['Volumen_Desviacion'] / np.sqrt(cant_safe)))
+        df_stats['Vol_IC_95_Sup'] = df_stats['Volumen_Promedio'] + (Z * (df_stats['Volumen_Desviacion'] / np.sqrt(cant_safe)))
+        df_stats['Peso_IC_95_Inf'] = df_stats['Peso_Promedio'] - (Z * (df_stats['Peso_Desviacion'] / np.sqrt(cant_safe)))
+        df_stats['Peso_IC_95_Sup'] = df_stats['Peso_Promedio'] + (Z * (df_stats['Peso_Desviacion'] / np.sqrt(cant_safe)))
+
+        columnas_a_redondear = [
+            'Volumen_Promedio', 'Volumen_Desviacion', 'Vol_IC_95_Inf', 'Vol_IC_95_Sup',
+            'Peso_Promedio', 'Peso_Desviacion', 'Peso_IC_95_Inf', 'Peso_IC_95_Sup'
+        ]
+        df_stats[columnas_a_redondear] = df_stats[columnas_a_redondear].round(3)
+
+        # EXPORTACIÓN
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_resumen.to_excel(writer, sheet_name='Resumen', index=False)
+            
+            df_general_estilizado = df_general.style.apply(resaltar_duplicados, axis=None)
+            df_general_estilizado.to_excel(writer, sheet_name='General', index=False)
+
+            df_japon_estilizado = df_japon.style.apply(resaltar_duplicados, axis=None)
+            df_japon_estilizado.to_excel(writer, sheet_name='Japon', index=False)
+            
+            df_stats.to_excel(writer, sheet_name='Analisis_Marcas_Material', index=False)
+
+        output.seek(0)
+        return True, "Cruce de Stock generado exitosamente.", [("Reporte_Stock_y_Japon.xlsx", output)]
+
+    except Exception as e:
+        st.error(f"Error en procesamiento: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e), []
 # ==========================================
 #      LÓGICA CMPC CELULOSA
 # ==========================================
@@ -2120,6 +2305,10 @@ def procesar_cmpc_sag(rutas):
 #      INTERFAZ STREAMLIT
 # ==========================================
 CONFIG_ARCHIVOS = {
+    "Cruzar Stock Madera": [
+        {"id": "zoopp", "nombre": "Archivo ZOOPP (DBF o Excel)", "opcional": False, "descripcion": "Archivo ZOOPP exportado de SAP"},
+        {"id": "invsvti", "nombre": "Inventario INVSVTI", "opcional": False, "descripcion": "Archivo Excel del inventario SVTI (invsvti.xls)"},
+    ],
     "Madera": [
         {"id": "programa", "nombre": "Programa", "opcional": False, "descripcion": "Último programa de consolidación"},
         {"id": "saldos",   "nombre": "Saldos",   "opcional": True},
@@ -2315,7 +2504,7 @@ def mostrar_menu_materiales_arauco():
         st.session_state.tipo_material = None
         st.rerun()
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         if st.button("**Celulosa**", use_container_width=True):
@@ -2329,6 +2518,10 @@ def mostrar_menu_materiales_arauco():
     with col2:
         if st.button("**SAG**", use_container_width=True):
             st.session_state.tipo_material = "SAG"
+            st.rerun()
+    with col3: # NUEVO BOTÓN
+        if st.button("**Cruzar Stock**", use_container_width=True):
+            st.session_state.tipo_material = "Cruzar Stock Madera"
             st.rerun()
 
 def mostrar_menu_materiales_cmpc():
@@ -2474,6 +2667,8 @@ def ejecutar_proceso():
             exito, mensaje, archivos = procesar_madera(rutas)
         elif tipo_material == "Celulosa":
             exito, mensaje, archivos = procesar_celulosa(rutas)
+        elif tipo_material == "Cruzar Stock Madera": # <--- AÑADIR ESTAS DOS LÍNEAS
+            exito, mensaje, archivos = procesar_cruzar_stock(rutas)
         elif tipo_material == "SAG":
             exito, mensaje, archivos = procesar_sag(rutas)
         elif tipo_material == "CMPC Celulosa":
